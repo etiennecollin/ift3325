@@ -1,0 +1,6 @@
+[package]
+name = "devoir2-ift3325"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

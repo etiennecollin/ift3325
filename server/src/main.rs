@@ -1,10 +1,9 @@
-// use colored::*;
 use log::{error, info};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::io::{AsyncReadExt, Result};
 use tokio::net::{TcpListener, TcpStream};
 
-async fn handle_client(mut stream: TcpStream) -> Result<()> {
+async fn handle_client(mut stream: TcpStream) -> Result<bool> {
     let addr = stream.peer_addr()?;
     info!("New client: {:?}", addr);
 
@@ -14,15 +13,21 @@ async fn handle_client(mut stream: TcpStream) -> Result<()> {
 
     // Check if connection was closed
     if bytes_read == 0 {
-        return Ok(());
+        info!("Connection closed by: {:?}", addr);
+        return Ok(false);
     }
 
     // Convert the bytes to a string and print it
     let data = String::from_utf8_lossy(&buf[..bytes_read]);
     info!("Received data: {}", data);
 
+    // Check if the client requested server shutdown
+    if data.trim() == "exit" {
+        return Ok(true);
+    }
+
     info!("Closing connection with: {:?}", addr);
-    Ok(())
+    Ok(false)
 }
 
 #[tokio::main]
@@ -49,8 +54,8 @@ async fn main() {
     };
 
     // Bind to the address and port
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = match TcpListener::bind(addr).await {
+    let full_addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = match TcpListener::bind(full_addr).await {
         Ok(listener) => listener,
         Err(e) => {
             error!("Failed to bind to address: {}", e);
@@ -58,17 +63,25 @@ async fn main() {
         }
     };
 
-    // Accept connections
-    info!("Server listening on {}", addr);
+    // Accept connections indefinitely
+    info!("Server listening on {}", full_addr);
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                info!("Client connected");
-
                 // Spawn a new task to handle the client
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream).await {
-                        error!("Failed to handle client: {}", e);
+                    // Handle the client
+                    let status = match handle_client(stream).await {
+                        Ok(status) => status,
+                        Err(e) => {
+                            error!("Failed to handle client: {}", e);
+                            return;
+                        }
+                    };
+                    // Check if the client requested server shutdown
+                    if status {
+                        info!("Shutting down server");
+                        exit(0);
                     }
                 });
             }

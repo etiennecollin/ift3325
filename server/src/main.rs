@@ -3,8 +3,7 @@ use std::{env, net::SocketAddr, process::exit};
 use tokio::io::{AsyncReadExt, Result};
 use tokio::net::{TcpListener, TcpStream};
 
-async fn handle_client(mut stream: TcpStream) -> Result<bool> {
-    let addr = stream.peer_addr()?;
+async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> {
     info!("New client: {:?}", addr);
 
     // Print received data
@@ -19,10 +18,11 @@ async fn handle_client(mut stream: TcpStream) -> Result<bool> {
 
     // Convert the bytes to a string and print it
     let data = String::from_utf8_lossy(&buf[..bytes_read]);
-    info!("Received data: {}", data);
+    let data_trimmed = data.trim();
+    info!("Received data: {}", data_trimmed);
 
     // Check if the client requested server shutdown
-    if data.trim() == "exit" {
+    if data_trimmed == "exit" {
         return Ok(true);
     }
 
@@ -67,11 +67,11 @@ async fn main() {
     info!("Server listening on {}", full_addr);
     loop {
         match listener.accept().await {
-            Ok((stream, _)) => {
+            Ok((stream, client_addr)) => {
                 // Spawn a new task to handle the client
                 tokio::spawn(async move {
                     // Handle the client
-                    let status = match handle_client(stream).await {
+                    let status = match handle_client(stream, client_addr).await {
                         Ok(status) => status,
                         Err(e) => {
                             error!("Failed to handle client: {}", e);

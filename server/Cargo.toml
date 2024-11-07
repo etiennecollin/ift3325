@@ -7,5 +7,5 @@ authors = ["Etienne Collin <contact@etiennecollin.com>", "Emeric Laberge <emeric
 [dependencies]
 env_logger = "0.11.5"
 log = "0.4.22"
-shared = { path = "../shared" }
+shared = { path = "../shared/" }
 tokio = { version = "1.41.0", features = ["full"] }

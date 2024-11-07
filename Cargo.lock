@@ -120,8 +120,8 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
- "shared",
  "tokio",
+ "utils",
 ]
 
 [[package]]
@@ -338,13 +338,9 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
- "shared",
  "tokio",
+ "utils",
 ]
-
-[[package]]
-name = "shared"
-version = "0.1.0"
 
 [[package]]
 name = "signal-hook-registry"

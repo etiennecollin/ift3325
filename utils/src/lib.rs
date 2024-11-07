@@ -1,3 +1,7 @@
+pub mod bit_stuffing;
+pub mod crc;
+pub mod frame;
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

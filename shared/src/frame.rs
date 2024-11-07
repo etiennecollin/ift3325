@@ -10,7 +10,7 @@ pub struct Frame {
 impl Frame {
     pub fn new(frame_type: u8, num: u8, data: Vec<u8>, crc: u16) -> Frame {
         Frame {
-            flag: 0x7E, // 01111110
+            flag: 0x7E, // 0111 1110
             frame_type,
             num,
             data,

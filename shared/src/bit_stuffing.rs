@@ -7,4 +7,3 @@ pub fn bit_destuffing(data: Vec<u8>) -> Vec<u8> {
     // TODO: Faire le bit destuffing
     data
 }
-

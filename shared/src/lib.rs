@@ -1,3 +1,3 @@
-pub mod frame;
-pub mod crc;
 pub mod bit_stuffing;
+pub mod crc;
+pub mod frame;

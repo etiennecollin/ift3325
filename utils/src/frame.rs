@@ -164,13 +164,10 @@ mod tests {
     #[test]
     fn frame_to_bytes_conversion_test() {
         let bytes: &[u8] = &[0x7E, 0x01, 0x02, 0x03, 0x04, 0x0D, 0x03, 0x7E];
-
         let frame = Frame::new_from_bytes(bytes);
-        if let Err(e) = frame {
-            println!("{}", e);
-        }
-        assert!(frame.is_ok());
 
+        // Check that the frame is correct
+        assert!(frame.is_ok());
         let frame = frame.unwrap();
         assert_eq!(frame.address, 0x01);
         assert_eq!(frame.control, 0x02);
@@ -180,5 +177,37 @@ mod tests {
             frame.content.unwrap(),
             vec![0x01, 0x02, 0x03, 0x04, 0x0D, 0x03]
         );
+    }
+
+    #[test]
+    fn frame_to_bytes_empty_data_test() {
+        let mut frame = Frame::new(0x01, 0x02, vec![]);
+        let bytes = frame.to_bytes();
+
+        // Set the expected values
+        let expected_fcs = 0x1373u16;
+        let mut expected_bytes = vec![Frame::BOUNDARY_FLAG, 0x01, 0x02];
+        expected_bytes.append(&mut expected_fcs.to_be_bytes().to_vec());
+        expected_bytes.push(Frame::BOUNDARY_FLAG);
+
+        // Check that the bytes are correct
+        assert_eq!(frame.fcs.unwrap(), expected_fcs);
+        assert_eq!(
+            frame.content.unwrap(),
+            expected_bytes[1..expected_bytes.len() - 1].to_vec()
+        );
+        assert_eq!(bytes, expected_bytes);
+
+        // Decode the frame from the bytes
+        let frame = Frame::new_from_bytes(&bytes);
+
+        // Check that the frame is correct
+        assert!(frame.is_ok());
+        let frame = frame.unwrap();
+        assert_eq!(frame.address, 0x01);
+        assert_eq!(frame.control, 0x02);
+        assert_eq!(frame.data, vec![]);
+        assert_eq!(frame.fcs.unwrap(), 0x1373);
+        assert_eq!(frame.content.unwrap(), vec![0x01, 0x02, 0x13, 0x73]);
     }
 }

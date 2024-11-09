@@ -1,5 +1,9 @@
 use crate::frame::Frame;
 
+/// Perform byte stuffing on the given frame bytes.
+/// This is done to avoid the byte being interpreted as a flag.
+/// How it works:
+/// - If a byte is equal to a flag, the escape flag is added before the byte and the byte has its 5th bit flipped.
 pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
     let mut stuffed_frame: Vec<u8> = Vec::new();
 
@@ -14,6 +18,11 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
     stuffed_frame
 }
 
+/// Destuff the given frame bytes.
+/// This function removes the byte stuffing from the given frame bytes.
+///
+/// # Errors
+/// - If an abort sequence is detected
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut destuffed_frame: Vec<u8> = Vec::new();
 

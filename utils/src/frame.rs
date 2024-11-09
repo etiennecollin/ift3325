@@ -25,6 +25,9 @@ pub struct Frame {
     /// - n bytes: data
     /// - 2 bytes: fcs stored as big-endian
     content: Option<Vec<u8>>,
+
+    /// The byte-stuffed version of the frame content
+    content_stuffed: Option<Vec<u8>>,
 }
 
 impl Frame {
@@ -37,13 +40,55 @@ impl Frame {
 
     /// Create a new frame with the given address, control, and data.
     pub fn new(address: u8, control: u8, data: Vec<u8>) -> Frame {
-        Frame {
+        let mut frame = Frame {
             address,
             control,
             data,
             fcs: None,
             content: None,
-        }
+            content_stuffed: None,
+        };
+        frame.generate_content();
+        frame
+    }
+
+    /// Initialize the content fields of the frame.
+    /// The following fields are initialized:
+    /// - The frame content
+    /// - The bit-stuffed version of the frame content
+    ///
+    /// The frame content is encoded as follows:
+    /// - 1 byte: boundary flag
+    /// - Content
+    ///     - 1 byte: address
+    ///     - 1 byte: control
+    ///     - n bytes: data
+    ///     - 2 bytes: fcs stored as big-endian
+    /// - 1 byte: boundary flag
+    ///
+    /// The size of the content may vary due to byte stuffing.
+    fn generate_content(&mut self) {
+        // Create the frame content
+        let mut frame_content = vec![self.address, self.control];
+        frame_content.append(&mut self.data.clone());
+
+        // Compute the FCS and store it
+        let fcs = crc_16_ccitt(&frame_content);
+        self.fcs = Some(fcs);
+
+        // Append the FCS to the frame content and store it
+        frame_content.append(&mut fcs.to_be_bytes().to_vec());
+        self.content = Some(frame_content);
+
+        // Byte-stuff the frame content and store it
+        let mut bytes = vec![Frame::BOUNDARY_FLAG];
+        bytes.append(&mut byte_stuffing(
+            self.content
+                .as_ref()
+                .expect("The frame content is not set, this should never happen"),
+        ));
+        bytes.push(Frame::BOUNDARY_FLAG);
+        self.content_stuffed = Some(bytes);
     }
 
     /// Convert the frame to a vector of bytes encoded with byte stuffing.
@@ -57,31 +102,11 @@ impl Frame {
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
-    pub fn to_bytes(&mut self) -> Vec<u8> {
-        if self.content.is_none() {
-            // Create the frame content
-            let mut frame_content = vec![self.address, self.control];
-            frame_content.append(&mut self.data.clone());
-
-            // Compute the FCS and append it to the frame
-            let fcs = crc_16_ccitt(&frame_content);
-            self.fcs = Some(fcs);
-
-            // Append the FCS to the frame content and store it
-            frame_content.append(&mut fcs.to_be_bytes().to_vec());
-            self.content = Some(frame_content);
-        }
-
-        // Byte-stuff the frame content
-        let mut bytes = vec![Frame::BOUNDARY_FLAG];
-        bytes.append(&mut byte_stuffing(
-            self.content
-                .as_ref()
-                .expect("The frame content is not set, this should not happen"),
-        ));
-        bytes.push(Frame::BOUNDARY_FLAG);
-
-        bytes
+    pub fn get_bytes(&mut self) -> Vec<u8> {
+        self.content_stuffed
+            .as_ref()
+            .expect("The stuffed frame content is not set, this should never happen")
+            .clone()
     }
 
     /// Create a new frame from the given bytes.
@@ -132,6 +157,7 @@ impl Frame {
         let mut frame = Frame::new(address, control, data);
         frame.fcs = Some(fcs);
         frame.content = Some(content);
+        frame.content_stuffed = Some(bytes.to_vec());
 
         Ok(frame)
     }
@@ -142,9 +168,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frame_to_bytes_structure_test() {
+    fn frame_get_bytes_structure_test() {
         let mut frame = Frame::new(0x01, 0x02, vec![0x03, 0x04]);
-        let bytes = frame.to_bytes();
+        let bytes = frame.get_bytes();
 
         // Set the expected values
         let expected_fcs = 0x0D03u16;
@@ -162,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_to_bytes_conversion_test() {
+    fn bytes_to_frame_conversion_test() {
         let bytes: &[u8] = &[0x7E, 0x01, 0x02, 0x03, 0x04, 0x0D, 0x03, 0x7E];
         let frame = Frame::new_from_bytes(bytes);
 
@@ -177,12 +203,13 @@ mod tests {
             frame.content.unwrap(),
             vec![0x01, 0x02, 0x03, 0x04, 0x0D, 0x03]
         );
+        assert_eq!(frame.content_stuffed.unwrap(), bytes);
     }
 
     #[test]
-    fn frame_to_bytes_empty_data_test() {
+    fn frame_empty_data_test() {
         let mut frame = Frame::new(0x01, 0x02, vec![]);
-        let bytes = frame.to_bytes();
+        let bytes = frame.get_bytes();
 
         // Set the expected values
         let expected_fcs = 0x1373u16;
@@ -209,5 +236,6 @@ mod tests {
         assert_eq!(frame.data, vec![]);
         assert_eq!(frame.fcs.unwrap(), 0x1373);
         assert_eq!(frame.content.unwrap(), vec![0x01, 0x02, 0x13, 0x73]);
+        assert_eq!(frame.content_stuffed.unwrap(), bytes);
     }
 }

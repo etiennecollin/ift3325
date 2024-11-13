@@ -1,7 +1,7 @@
 //! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
-//! Clients can connect to the server, send data, and if they send the message "exit",
+//! Clients can connect to the server, send data, and if they send the message "shutdown",
 //! the server will shut down.
 //!
 //! ## Usage
@@ -33,7 +33,7 @@ use tokio::{
 ///
 /// # Returns
 ///
-/// Returns `Ok(true)` if the client sent "exit", indicating the server should shut down,
+/// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
 /// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
 async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> {
     info!("New client: {:?}", addr);
@@ -68,7 +68,7 @@ async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> 
     }
 
     // Check if the client requested server shutdown
-    if data_trimmed == "exit" {
+    if data_trimmed == "shutdown" {
         Ok(true)
     } else {
         Ok(false)
@@ -151,34 +151,30 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
-    const PORT: u16 = 8080;
-
-    async fn test_server(port: u16, data: &[u8], expected_status: bool) {
+    async fn test_server(data: &[u8]) -> bool {
         // Setup the server
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let listener = TcpListener::bind(addr)
+        let mut server_addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let listener = TcpListener::bind(server_addr)
             .await
             .expect("Failed to bind to address");
+        server_addr = listener.local_addr().expect("Failed to get local address");
 
         // Spawn a task to accept a connection
-        task::spawn(async move {
+        let status = task::spawn(async move {
             // Accept incoming connections
-            let (stream, _) = listener
+            let (stream, client_addr) = listener
                 .accept()
                 .await
                 .expect("Failed to accept connection");
 
             // Get the status from the connection
-            let result = handle_client(stream, addr)
+            handle_client(stream, client_addr)
                 .await
-                .expect("Failed to handle client");
-
-            // Check that connection status
-            assert!(result == expected_status);
+                .expect("Failed to handle client")
         });
 
         // Client connects to the server
-        let mut client = TcpStream::connect(addr)
+        let mut client = TcpStream::connect(server_addr)
             .await
             .expect("Failed to connect to server");
 
@@ -190,6 +186,9 @@ mod tests {
             .shutdown()
             .await
             .expect("Failed to shutdown connection");
+
+        // Return the status
+        status.await.expect("Failed to get status")
     }
 
     /// Tests the handling of a client connection that sends normal data.
@@ -199,7 +198,7 @@ mod tests {
     /// without requesting a shutdown.
     #[tokio::test]
     async fn test_handle_client() {
-        test_server(PORT + 1, b"Hello", false).await;
+        assert!(!test_server(b"Hello").await);
     }
 
     /// Tests the handling of the "exit" command from a client.
@@ -209,6 +208,6 @@ mod tests {
     /// this command and indicates that it should shut down.
     #[tokio::test]
     async fn test_exit_command() {
-        test_server(PORT + 2, b"exit", false).await;
+        assert!(test_server(b"shutdown").await);
     }
 }

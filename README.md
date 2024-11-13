@@ -15,7 +15,7 @@ Run the client:
 ```
 
 > [!NOTE]
-> If the file sent only contains the string `exit`, the server will shutdown.
+> If the file sent only contains the string `shutdown`, the server will shutdown.
 
 ## Debugging vs. Release
 

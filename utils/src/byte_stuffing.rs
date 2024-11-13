@@ -81,4 +81,21 @@ mod tests {
         let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
         assert_eq!(destuffed_data, data);
     }
+
+    #[test]
+    fn byte_stuffing_complex_test() {
+        let data = [Frame::BOUNDARY_FLAG, Frame::ESCAPE_FLAG, 0xFF, 0x00, 0x01, Frame::ESCAPE_FLAG, Frame::BOUNDARY_FLAG];
+        let stuffed_data = byte_stuffing(&data);
+        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        assert_eq!(destuffed_data, data);
+    }
+
+    #[test]
+    fn byte_stuffing_empty_test() {
+        let data = [];
+        let stuffed_data = byte_stuffing(&data);
+        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        assert_eq!(destuffed_data, data);
+    }
+
 }

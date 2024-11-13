@@ -1,0 +1,1 @@
+searchState.loadedDescShard("client", 0, "A simple TCP client for sending files to a server.\nThe main function that initializes the client.\nSends a file to the specified server address.")

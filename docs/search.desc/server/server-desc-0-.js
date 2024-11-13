@@ -1,0 +1,1 @@
+searchState.loadedDescShard("server", 0, "A simple asynchronous TCP server that listens for client …\nHandles incoming client connections.\nThe main function that initializes the server.")

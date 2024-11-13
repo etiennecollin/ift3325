@@ -40,7 +40,7 @@ async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> 
 
     // Print received data
     let mut buf = Vec::new();
-    let bytes_read = match stream.read(&mut buf).await {
+    let bytes_read = match stream.read_to_end(&mut buf).await {
         Ok(n) => n,
         Err(e) => {
             error!("Failed to read stream from: {}", addr);

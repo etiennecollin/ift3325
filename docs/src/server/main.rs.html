@@ -211,11 +211,10 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
-//! Clients can connect to the server, send data, and if they send the message "exit",
+//! Clients can connect to the server, send data, and if they send the message "shutdown",
 //! the server will shut down.
 //!
 //! ## Usage
@@ -247,14 +246,14 @@
 ///
 /// # Returns
 ///
-/// Returns `Ok(true)` if the client sent "exit", indicating the server should shut down,
+/// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
 /// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
 </span><span class="kw">async fn </span>handle_client(<span class="kw-2">mut </span>stream: TcpStream, addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
     <span class="macro">info!</span>(<span class="string">"New client: {:?}"</span>, addr);
 
     <span class="comment">// Print received data
     </span><span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
-    <span class="kw">let </span>bytes_read = <span class="kw">match </span>stream.read(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
+    <span class="kw">let </span>bytes_read = <span class="kw">match </span>stream.read_to_end(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(n) =&gt; n,
         <span class="prelude-val">Err</span>(e) =&gt; {
             <span class="macro">error!</span>(<span class="string">"Failed to read stream from: {}"</span>, addr);
@@ -282,7 +281,7 @@
     }
 
     <span class="comment">// Check if the client requested server shutdown
-    </span><span class="kw">if </span>data_trimmed == <span class="string">"exit" </span>{
+    </span><span class="kw">if </span>data_trimmed == <span class="string">"shutdown" </span>{
         <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
     } <span class="kw">else </span>{
         <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
@@ -365,34 +364,30 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>tokio::io::AsyncWriteExt;
 
-    <span class="kw">const </span>PORT: u16 = <span class="number">8080</span>;
-
-    <span class="kw">async fn </span>test_server(port: u16, data: <span class="kw-2">&amp;</span>[u8], expected_status: bool) {
+    <span class="kw">async fn </span>test_server(data: <span class="kw-2">&amp;</span>[u8]) -&gt; bool {
         <span class="comment">// Setup the server
-        </span><span class="kw">let </span>addr = SocketAddr::from(([<span class="number">127</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>], port));
-        <span class="kw">let </span>listener = TcpListener::bind(addr)
+        </span><span class="kw">let </span><span class="kw-2">mut </span>server_addr = SocketAddr::from(([<span class="number">127</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>], <span class="number">0</span>));
+        <span class="kw">let </span>listener = TcpListener::bind(server_addr)
             .<span class="kw">await
             </span>.expect(<span class="string">"Failed to bind to address"</span>);
+        server_addr = listener.local_addr().expect(<span class="string">"Failed to get local address"</span>);
 
         <span class="comment">// Spawn a task to accept a connection
-        </span>task::spawn(<span class="kw">async move </span>{
+        </span><span class="kw">let </span>status = task::spawn(<span class="kw">async move </span>{
             <span class="comment">// Accept incoming connections
-            </span><span class="kw">let </span>(stream, <span class="kw">_</span>) = listener
+            </span><span class="kw">let </span>(stream, client_addr) = listener
                 .accept()
                 .<span class="kw">await
                 </span>.expect(<span class="string">"Failed to accept connection"</span>);
 
             <span class="comment">// Get the status from the connection
-            </span><span class="kw">let </span>result = handle_client(stream, addr)
+            </span>handle_client(stream, client_addr)
                 .<span class="kw">await
-                </span>.expect(<span class="string">"Failed to handle client"</span>);
-
-            <span class="comment">// Check that connection status
-            </span><span class="macro">assert!</span>(result == expected_status);
+                </span>.expect(<span class="string">"Failed to handle client"</span>)
         });
 
         <span class="comment">// Client connects to the server
-        </span><span class="kw">let </span><span class="kw-2">mut </span>client = TcpStream::connect(addr)
+        </span><span class="kw">let </span><span class="kw-2">mut </span>client = TcpStream::connect(server_addr)
             .<span class="kw">await
             </span>.expect(<span class="string">"Failed to connect to server"</span>);
 
@@ -404,6 +399,9 @@
             .shutdown()
             .<span class="kw">await
             </span>.expect(<span class="string">"Failed to shutdown connection"</span>);
+
+        <span class="comment">// Return the status
+        </span>status.<span class="kw">await</span>.expect(<span class="string">"Failed to get status"</span>)
     }
 
     <span class="doccomment">/// Tests the handling of a client connection that sends normal data.
@@ -413,7 +411,7 @@
     /// without requesting a shutdown.
     </span><span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_handle_client() {
-        test_server(PORT + <span class="number">1</span>, <span class="string">b"Hello"</span>, <span class="bool-val">false</span>).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(!test_server(<span class="string">b"Hello"</span>).<span class="kw">await</span>);
     }
 
     <span class="doccomment">/// Tests the handling of the "exit" command from a client.
@@ -423,7 +421,7 @@
     /// this command and indicates that it should shut down.
     </span><span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_exit_command() {
-        test_server(PORT + <span class="number">2</span>, <span class="string">b"exit"</span>, <span class="bool-val">false</span>).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(test_server(<span class="string">b"shutdown"</span>).<span class="kw">await</span>);
     }
 }
 </code></pre></div></section></main></body></html>

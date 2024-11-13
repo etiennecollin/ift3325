@@ -12,7 +12,7 @@ const LUT: [PolynomialSize; 256] = lookup_table();
 /// remainder of the polynomial for the corresponding byte value.
 ///
 /// The implementation was inspired by:
-/// - https://barrgroup.com/blog/crc-series-part-3-crc-implementation-code-cc
+/// - <https://barrgroup.com/blog/crc-series-part-3-crc-implementation-code-cc>
 const fn lookup_table() -> [PolynomialSize; 256] {
     let mut table = [0; 256];
     let mut input: usize = 0;

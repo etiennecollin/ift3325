@@ -7,6 +7,7 @@ use crate::frame::Frame;
 pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
     let mut stuffed_frame: Vec<u8> = Vec::new();
 
+    stuffed_frame.push(Frame::BOUNDARY_FLAG);
     frame_bytes.iter().for_each(|byte| {
         if *byte == Frame::BOUNDARY_FLAG || *byte == Frame::ESCAPE_FLAG {
             stuffed_frame.push(Frame::ESCAPE_FLAG);
@@ -15,6 +16,8 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
             stuffed_frame.push(*byte);
         }
     });
+    stuffed_frame.push(Frame::BOUNDARY_FLAG);
+
     stuffed_frame
 }
 
@@ -37,6 +40,7 @@ pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
         } else {
             match *byte {
                 Frame::ESCAPE_FLAG => escape = true,
+                Frame::BOUNDARY_FLAG => continue,
                 _ => destuffed_frame.push(*byte),
             }
         }
@@ -56,10 +60,12 @@ mod tests {
         assert_eq!(
             stuffed_data,
             [
+                Frame::BOUNDARY_FLAG,
                 Frame::ESCAPE_FLAG,
                 Frame::BOUNDARY_FLAG ^ Frame::REPLACEMENT_POSITION,
                 Frame::ESCAPE_FLAG,
-                Frame::BOUNDARY_FLAG ^ Frame::REPLACEMENT_POSITION
+                Frame::BOUNDARY_FLAG ^ Frame::REPLACEMENT_POSITION,
+                Frame::BOUNDARY_FLAG,
             ]
         );
         let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
@@ -77,14 +83,23 @@ mod tests {
     fn bit_stuffing_simple_test() {
         let data = [0xFF];
         let stuffed_data = byte_stuffing(&data);
-        assert_eq!(stuffed_data, data);
+        let expected_stuffed_data = [Frame::BOUNDARY_FLAG, 0xFF, Frame::BOUNDARY_FLAG];
+        assert_eq!(stuffed_data, expected_stuffed_data);
         let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
     #[test]
     fn byte_stuffing_complex_test() {
-        let data = [Frame::BOUNDARY_FLAG, Frame::ESCAPE_FLAG, 0xFF, 0x00, 0x01, Frame::ESCAPE_FLAG, Frame::BOUNDARY_FLAG];
+        let data = [
+            Frame::BOUNDARY_FLAG,
+            Frame::ESCAPE_FLAG,
+            0xFF,
+            0x00,
+            0x01,
+            Frame::ESCAPE_FLAG,
+            Frame::BOUNDARY_FLAG,
+        ];
         let stuffed_data = byte_stuffing(&data);
         let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
         assert_eq!(destuffed_data, data);
@@ -97,5 +112,4 @@ mod tests {
         let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
         assert_eq!(destuffed_data, data);
     }
-
 }

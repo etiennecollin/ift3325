@@ -3,6 +3,22 @@ use crate::{
     crc::crc_16_ccitt,
 };
 
+#[derive(Debug)]
+/// An error that may occur when working with frames.
+/// The following errors are possible:
+/// - InvalidFrameType: The frame type is invalid
+/// - InvalidFCS: The FCS does not match the CRC
+/// - InvalidLength: The frame is too short
+/// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
+/// - ByteDestuffingError: An error occurred during byte destuffing
+pub enum FrameError {
+    InvalidFrameType(u8),
+    InvalidFCS(u16),
+    InvalidLength,
+    MissingBoundaryFlag,
+    AbortSequenceReceived,
+}
+
 #[repr(u8)]
 /// The type of a frame.
 /// The frame type is encoded as a single byte.
@@ -21,6 +37,7 @@ pub enum FrameType {
     P = b'P',
 }
 
+/// Convert a byte to a frame type.
 impl From<u8> for FrameType {
     fn from(byte: u8) -> Self {
         match byte {
@@ -35,6 +52,7 @@ impl From<u8> for FrameType {
     }
 }
 
+/// Convert a frame type to a byte.
 impl From<FrameType> for u8 {
     fn from(frame_type: FrameType) -> Self {
         frame_type as u8
@@ -155,21 +173,15 @@ impl Frame {
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
     /// - 1 byte: boundary flag
-    ///
-    /// # Errors
-    /// - If the frame is too short
-    /// - If the frame does not start or end with a boundary flag
-    /// - If a CRC error is detected
-    /// - If a byte stuffing error is detected
-    pub fn new_from_bytes(bytes: &[u8]) -> Result<Frame, &'static str> {
+    pub fn new_from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 6 {
-            return Err("Invalid frame: too short");
+            return Err(FrameError::InvalidLength);
         }
 
         // The frame should start and end with a boundary flag
         if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
-            return Err("Invalid frame: missing boundary flag");
+            return Err(FrameError::MissingBoundaryFlag);
         }
 
         // Destuff the frame content
@@ -187,7 +199,7 @@ impl Frame {
         let expected_fcs = crc_16_ccitt(&frame_content);
 
         if fcs != expected_fcs {
-            return Err("Invalid frame: a CRC error was detected");
+            return Err(FrameError::InvalidFCS(fcs));
         }
 
         // Create the frame content
@@ -203,6 +215,81 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_abort_error_test() {
+        let bytes: &[u8] = &[
+            0x7E,
+            FrameType::ConnexionRequest.into(),
+            0x02,
+            0x03,
+            0x04,
+            0x8E,
+            0xF7,
+            Frame::ESCAPE_FLAG,
+            Frame::BOUNDARY_FLAG,
+            0x7E,
+        ];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+    }
+
+    #[test]
+    fn frame_length_error_test() {
+        let bytes: &[u8] = &[0xFF];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+    }
+
+    #[test]
+    fn frame_flags_error_test() {
+        let bytes: &[u8] = &[
+            FrameType::ConnexionRequest.into(),
+            0x02,
+            0x03,
+            0x04,
+            0x8E,
+            0xF7,
+            0x7E,
+        ];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+
+        let bytes: &[u8] = &[
+            0x7E,
+            FrameType::ConnexionRequest.into(),
+            0x02,
+            0x03,
+            0x04,
+            0x8E,
+            0xF7,
+        ];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+    }
+
+    #[test]
+    fn frame_type_error_test() {
+        let bytes: &[u8] = &[0x7E, 0x00, 0x02, 0x03, 0x04, 0x8E, 0xF7, 0x7E];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+    }
+
+    #[test]
+    fn frame_crc_error_test() {
+        let bytes: &[u8] = &[
+            0x7E,
+            FrameType::ConnexionRequest.into(),
+            0x02,
+            0x03,
+            0x04,
+            0x8E,
+            0xFF, // Should be 0xF7
+            0x7E,
+        ];
+        let frame = Frame::new_from_bytes(bytes);
+        assert!(frame.is_err());
+    }
 
     #[test]
     fn frame_get_bytes_structure_test() {

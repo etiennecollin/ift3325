@@ -1,4 +1,4 @@
-use crate::frame::Frame;
+use crate::frame::{Frame, FrameError};
 
 /// Perform byte stuffing on the given frame bytes.
 /// This is done to avoid the byte being interpreted as a flag.
@@ -26,14 +26,14 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 ///
 /// # Errors
 /// - If an abort sequence is detected
-pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::new();
 
     let mut escape: bool = false;
     for byte in frame_bytes {
         if escape {
             if *byte == Frame::BOUNDARY_FLAG {
-                return Err("Invalid frame, abort sequence received");
+                return Err(FrameError::AbortSequenceReceived);
             }
             destuffed_frame.push(*byte ^ Frame::REPLACEMENT_POSITION);
             escape = false;

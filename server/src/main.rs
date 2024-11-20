@@ -20,6 +20,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     task,
 };
+use utils::frame::{Frame, FrameType};
 
 /// Handles incoming client connections.
 ///
@@ -38,41 +39,85 @@ use tokio::{
 async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> {
     info!("New client: {:?}", addr);
 
-    // Print received data
-    let mut buf = Vec::new();
-    let bytes_read = match stream.read_to_end(&mut buf).await {
-        Ok(n) => n,
-        Err(e) => {
-            error!("Failed to read stream from: {}", addr);
-            return Err(e);
+    // FIXME: This is really bad. It's temporary code. The entire loop should be a util as it is
+    // used in the client as well.
+    let (mut read, mut write) = stream.split();
+
+    let mut frame_buf = [0; Frame::MAX_SIZE];
+    let mut frame_position = 0;
+    let mut in_frame = false;
+    loop {
+        let mut buf = [0; Frame::MAX_SIZE];
+        let read_length = read.read(&mut buf).await.unwrap();
+
+        for byte in buf[..read_length].iter() {
+            if *byte == Frame::BOUNDARY_FLAG {
+                frame_buf[frame_position] = *byte;
+                frame_position += 1;
+
+                // If the frame is complete, handle it
+                if in_frame {
+                    frame_position = 0;
+
+                    // Create frame from buffer
+                    let frame = Frame::from_bytes(&frame_buf).unwrap();
+
+                    // Handle the frame
+                    let mut end_connection = false;
+                    match frame.frame_type.into() {
+                        // If it is an acknowledgment, pop the acknowledged frames from the window
+                        FrameType::ReceiveReady => {
+                            info!("Received acknowledgement for frame {}", frame.num);
+                        }
+                        // If it is a rejection, pop the implicitly acknowledged frames from the window
+                        FrameType::Reject => {
+                            info!("Received reject for frame {}", frame.num);
+                        }
+                        // If it is a connection end frame, return true to stop the connection
+                        FrameType::ConnexionEnd => {
+                            end_connection = true;
+                        }
+                        _ => {}
+                    }
+
+                    // Convert the bytes to a string and print it
+                    let data_str = String::from_utf8_lossy(&frame.data);
+                    let data_trimmed = data_str.trim();
+                    info!("Received data from: {:?}: {}", addr, data_trimmed);
+
+                    // Send an acknowledgment and close the connection
+                    info!("Sending acknowledgment frame to: {:?}", addr);
+                    let ack_frame = Frame::new(FrameType::ReceiveReady, 1, Vec::new()).to_bytes();
+                    write.write_all(&ack_frame).await?;
+                    write.flush().await?;
+
+                    // Send a disconnection frame and close the connection
+                    info!("Sending disconnection frame to: {:?}", addr);
+                    let disconnection_frame =
+                        Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
+                    write.write_all(&disconnection_frame).await?;
+                    write.flush().await?;
+                    write.shutdown().await?;
+
+                    // Reset buffer
+                    frame_buf = [0; Frame::MAX_SIZE];
+                }
+
+                in_frame = !in_frame;
+            } else if in_frame {
+                // Add byte to frame buffer
+                frame_buf[frame_position] = *byte;
+                frame_position += 1;
+            }
         }
-    };
-
-    // Check if connection was closed
-    if bytes_read == 0 {
-        info!("Connection closed by: {:?}", addr);
-        return Ok(false);
     }
-
-    // Convert the bytes to a string and print it
-    let data = String::from_utf8_lossy(&buf[..bytes_read]);
-    let data_trimmed = data.trim();
-    info!("Received data from: {:?}: {}", addr, data_trimmed);
-
-    match stream.shutdown().await {
-        Ok(_) => info!("Connection closed with: {:?}", addr),
-        Err(e) => {
-            error!("Failed to close connection with: {:?}", addr);
-            return Err(e);
-        }
-    }
-
-    // Check if the client requested server shutdown
-    if data_trimmed == "shutdown" {
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    //
+    // // Check if the client requested server shutdown
+    // if data_trimmed == "shutdown" {
+    //     Ok(true)
+    // } else {
+    //     Ok(false)
+    // }
 }
 
 /// The main function that initializes the server.

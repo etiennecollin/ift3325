@@ -3,3 +3,6 @@ name = "utils"
 version = "0.1.0"
 edition = "2021"
 authors = ["Etienne Collin <contact@etiennecollin.com>", "Emeric Laberge <emeric.laberge@umontreal.ca>"]
+
+[dependencies]
+log = "0.4.22"

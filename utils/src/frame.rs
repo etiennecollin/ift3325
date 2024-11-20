@@ -60,6 +60,7 @@ impl From<FrameType> for u8 {
 }
 
 /// A frame for the HDLC protocol.
+#[derive(Debug)]
 pub struct Frame {
     /// The frame_type of the frame
     pub frame_type: u8,
@@ -92,6 +93,19 @@ impl Frame {
     pub const ESCAPE_FLAG: u8 = 0x7D;
     /// Replace an escaped byte by computing the XOR between the byte and this byte
     pub const REPLACEMENT_POSITION: u8 = 0x20;
+    /// The maximum size of the data field in bytes
+    pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
+
+    /// The size of a frame in bytes
+    /// The frame is encoded as follows:
+    /// - 1 byte: boundary flag
+    /// - Content
+    ///     - 1 byte: frame_type
+    ///     - 1 byte: num
+    ///     - n bytes: data
+    ///     - 2 bytes: fcs stored as big-endian
+    /// - 1 byte: boundary flag
+    pub const MAX_SIZE: usize = 6 + Self::MAX_SIZE_DATA;
 
     /// Create a new frame
     /// # Parameters
@@ -157,7 +171,7 @@ impl Frame {
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
-    pub fn get_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         self.content_stuffed
             .as_ref()
             .expect("The stuffed frame content is not set, this should never happen")
@@ -173,19 +187,40 @@ impl Frame {
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
     /// - 1 byte: boundary flag
-    pub fn new_from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
+    ///
+    /// # Errors
+    ///
+    /// The following errors may occur:
+    /// - InvalidFrameType: The frame type is invalid
+    /// - InvalidFCS: The FCS does not match the CRC
+    /// - InvalidLength: The frame is too short
+    /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
+    pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 6 {
             return Err(FrameError::InvalidLength);
         }
 
-        // The frame should start and end with a boundary flag
-        if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
+        // The frame should start with a boundary flag
+        if bytes[0] != Frame::BOUNDARY_FLAG {
             return Err(FrameError::MissingBoundaryFlag);
         }
 
+        // Find position of the last boundary flag
+        let last_flag_pos = match bytes[1..]
+            .iter()
+            .rev()
+            .position(|&byte| byte == Frame::BOUNDARY_FLAG)
+        {
+            Some(i) => {
+                // Add one since we iter on bytes[1..]
+                i + 1
+            }
+            None => return Err(FrameError::MissingBoundaryFlag),
+        };
+
         // Destuff the frame content
-        let content = byte_destuffing(&bytes[1..bytes.len() - 1])?;
+        let content = byte_destuffing(&bytes[..last_flag_pos + 1])?;
 
         // Extract the frame information
         let frame_type = content[0];
@@ -198,6 +233,8 @@ impl Frame {
         frame_content.append(&mut data.clone());
         let expected_fcs = crc_16_ccitt(&frame_content);
 
+        // We could check that the CRC of fame_type, num, data and fcs is 0,
+        // but it requires a second CRC and is not necessary
         if fcs != expected_fcs {
             return Err(FrameError::InvalidFCS(fcs));
         }
@@ -206,7 +243,7 @@ impl Frame {
         let mut frame = Frame::new(FrameType::from(frame_type), num, data);
         frame.fcs = Some(fcs);
         frame.content = Some(content);
-        frame.content_stuffed = Some(bytes.to_vec());
+        frame.content_stuffed = Some(bytes[..last_flag_pos + 1].to_vec());
 
         Ok(frame)
     }
@@ -230,14 +267,14 @@ mod tests {
             Frame::BOUNDARY_FLAG,
             0x7E,
         ];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
     }
 
     #[test]
     fn frame_length_error_test() {
         let bytes: &[u8] = &[0xFF];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
     }
 
@@ -252,7 +289,7 @@ mod tests {
             0xF7,
             0x7E,
         ];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
 
         let bytes: &[u8] = &[
@@ -264,14 +301,14 @@ mod tests {
             0x8E,
             0xF7,
         ];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
     }
 
     #[test]
     fn frame_type_error_test() {
         let bytes: &[u8] = &[0x7E, 0x00, 0x02, 0x03, 0x04, 0x8E, 0xF7, 0x7E];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
     }
 
@@ -287,7 +324,7 @@ mod tests {
             0xFF, // Should be 0xF7
             0x7E,
         ];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
         assert!(frame.is_err());
     }
 
@@ -319,7 +356,7 @@ mod tests {
             0xF7,
             0x7E,
         ];
-        let frame = Frame::new_from_bytes(bytes);
+        let frame = Frame::from_bytes(bytes);
 
         // Check that the frame is correct
         assert!(frame.is_ok());
@@ -335,7 +372,7 @@ mod tests {
     #[test]
     fn frame_empty_data_test() {
         let frame = Frame::new(FrameType::ConnexionRequest, 0x02, vec![]);
-        let bytes = frame.get_bytes();
+        let bytes = frame.to_bytes();
 
         // Set the expected values
         let expected_fcs = 0x78DDu16;
@@ -356,7 +393,7 @@ mod tests {
         assert_eq!(bytes, expected_bytes);
 
         // Decode the frame from the bytes
-        let frame = Frame::new_from_bytes(&bytes);
+        let frame = Frame::from_bytes(&bytes);
 
         // Check that the frame is correct
         assert!(frame.is_ok());

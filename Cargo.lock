@@ -380,9 +380,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.41.0"
+version = "1.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "145f3413504347a2be84393cc8a7d2fb4d863b375909ea59f2158261aa258bbb"
+checksum = "22cfb5bee7a6a52939ca9224d6ac897bb669134078daa8735560897f69de4d33"
 dependencies = [
  "backtrace",
  "bytes",
@@ -422,6 +422,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "utils"
 version = "0.1.0"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "wasi"

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["WindowError"],"struct":["Window"]};

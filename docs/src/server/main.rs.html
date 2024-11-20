@@ -211,6 +211,51 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
@@ -233,6 +278,7 @@
     net::{TcpListener, TcpStream},
     task,
 };
+<span class="kw">use </span>utils::frame::{Frame, FrameType};
 
 <span class="doccomment">/// Handles incoming client connections.
 ///
@@ -251,42 +297,86 @@
 </span><span class="kw">async fn </span>handle_client(<span class="kw-2">mut </span>stream: TcpStream, addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
     <span class="macro">info!</span>(<span class="string">"New client: {:?}"</span>, addr);
 
-    <span class="comment">// Print received data
-    </span><span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
-    <span class="kw">let </span>bytes_read = <span class="kw">match </span>stream.read_to_end(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
-        <span class="prelude-val">Ok</span>(n) =&gt; n,
-        <span class="prelude-val">Err</span>(e) =&gt; {
-            <span class="macro">error!</span>(<span class="string">"Failed to read stream from: {}"</span>, addr);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(e);
+    <span class="comment">// FIXME: This is really bad. It's temporary code. The entire loop should be a util as it is
+    // used in the client as well.
+    </span><span class="kw">let </span>(<span class="kw-2">mut </span>read, <span class="kw-2">mut </span>write) = stream.split();
+
+    <span class="kw">let </span><span class="kw-2">mut </span>frame_buf = [<span class="number">0</span>; Frame::MAX_SIZE];
+    <span class="kw">let </span><span class="kw-2">mut </span>frame_position = <span class="number">0</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>in_frame = <span class="bool-val">false</span>;
+    <span class="kw">loop </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0</span>; Frame::MAX_SIZE];
+        <span class="kw">let </span>read_length = read.read(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">for </span>byte <span class="kw">in </span>buf[..read_length].iter() {
+            <span class="kw">if </span><span class="kw-2">*</span>byte == Frame::BOUNDARY_FLAG {
+                frame_buf[frame_position] = <span class="kw-2">*</span>byte;
+                frame_position += <span class="number">1</span>;
+
+                <span class="comment">// If the frame is complete, handle it
+                </span><span class="kw">if </span>in_frame {
+                    frame_position = <span class="number">0</span>;
+
+                    <span class="comment">// Create frame from buffer
+                    </span><span class="kw">let </span>frame = Frame::from_bytes(<span class="kw-2">&amp;</span>frame_buf).unwrap();
+
+                    <span class="comment">// Handle the frame
+                    </span><span class="kw">let </span><span class="kw-2">mut </span>end_connection = <span class="bool-val">false</span>;
+                    <span class="kw">match </span>frame.frame_type.into() {
+                        <span class="comment">// If it is an acknowledgment, pop the acknowledged frames from the window
+                        </span>FrameType::ReceiveReady =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"Received acknowledgement for frame {}"</span>, frame.num);
+                        }
+                        <span class="comment">// If it is a rejection, pop the implicitly acknowledged frames from the window
+                        </span>FrameType::Reject =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"Received reject for frame {}"</span>, frame.num);
+                        }
+                        <span class="comment">// If it is a connection end frame, return true to stop the connection
+                        </span>FrameType::ConnexionEnd =&gt; {
+                            end_connection = <span class="bool-val">true</span>;
+                        }
+                        <span class="kw">_ </span>=&gt; {}
+                    }
+
+                    <span class="comment">// Convert the bytes to a string and print it
+                    </span><span class="kw">let </span>data_str = String::from_utf8_lossy(<span class="kw-2">&amp;</span>frame.data);
+                    <span class="kw">let </span>data_trimmed = data_str.trim();
+                    <span class="macro">info!</span>(<span class="string">"Received data from: {:?}: {}"</span>, addr, data_trimmed);
+
+                    <span class="comment">// Send an acknowledgment and close the connection
+                    </span><span class="macro">info!</span>(<span class="string">"Sending acknowledgment frame to: {:?}"</span>, addr);
+                    <span class="kw">let </span>ack_frame = Frame::new(FrameType::ReceiveReady, <span class="number">1</span>, Vec::new()).to_bytes();
+                    write.write_all(<span class="kw-2">&amp;</span>ack_frame).<span class="kw">await</span><span class="question-mark">?</span>;
+                    write.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+
+                    <span class="comment">// Send a disconnection frame and close the connection
+                    </span><span class="macro">info!</span>(<span class="string">"Sending disconnection frame to: {:?}"</span>, addr);
+                    <span class="kw">let </span>disconnection_frame =
+                        Frame::new(FrameType::ConnexionEnd, <span class="number">0</span>, Vec::new()).to_bytes();
+                    write.write_all(<span class="kw-2">&amp;</span>disconnection_frame).<span class="kw">await</span><span class="question-mark">?</span>;
+                    write.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+                    write.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+
+                    <span class="comment">// Reset buffer
+                    </span>frame_buf = [<span class="number">0</span>; Frame::MAX_SIZE];
+                }
+
+                in_frame = !in_frame;
+            } <span class="kw">else if </span>in_frame {
+                <span class="comment">// Add byte to frame buffer
+                </span>frame_buf[frame_position] = <span class="kw-2">*</span>byte;
+                frame_position += <span class="number">1</span>;
+            }
         }
-    };
-
-    <span class="comment">// Check if connection was closed
-    </span><span class="kw">if </span>bytes_read == <span class="number">0 </span>{
-        <span class="macro">info!</span>(<span class="string">"Connection closed by: {:?}"</span>, addr);
-        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
     }
-
-    <span class="comment">// Convert the bytes to a string and print it
-    </span><span class="kw">let </span>data = String::from_utf8_lossy(<span class="kw-2">&amp;</span>buf[..bytes_read]);
-    <span class="kw">let </span>data_trimmed = data.trim();
-    <span class="macro">info!</span>(<span class="string">"Received data from: {:?}: {}"</span>, addr, data_trimmed);
-
-    <span class="kw">match </span>stream.shutdown().<span class="kw">await </span>{
-        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">info!</span>(<span class="string">"Connection closed with: {:?}"</span>, addr),
-        <span class="prelude-val">Err</span>(e) =&gt; {
-            <span class="macro">error!</span>(<span class="string">"Failed to close connection with: {:?}"</span>, addr);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(e);
-        }
-    }
-
-    <span class="comment">// Check if the client requested server shutdown
-    </span><span class="kw">if </span>data_trimmed == <span class="string">"shutdown" </span>{
-        <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-    } <span class="kw">else </span>{
-        <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
-    }
-}
+    <span class="comment">//
+    // // Check if the client requested server shutdown
+    // if data_trimmed == "shutdown" {
+    //     Ok(true)
+    // } else {
+    //     Ok(false)
+    // }
+</span>}
 
 <span class="doccomment">/// The main function that initializes the server.
 ///

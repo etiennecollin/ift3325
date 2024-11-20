@@ -117,7 +117,7 @@ async fn receive(
             }
         };
 
-        // TODO: Move this to a separate function in utils?
+        // TODO: Move this to a separate function in utils
         for byte in buf[..read_length].iter() {
             if *byte == Frame::BOUNDARY_FLAG {
                 frame_buf[frame_position] = *byte;
@@ -200,6 +200,8 @@ async fn send(
         error!("Failed to read file contents: {}", e);
         return Err(());
     }
+
+    // TODO: Add async tasks to handle the timers and retransmissions
 
     // Read the file in chunks and create the frames to be sent
     let mut num: u8 = 0;

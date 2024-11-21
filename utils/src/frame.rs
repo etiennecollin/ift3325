@@ -13,7 +13,7 @@ use crate::{
 #[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
-    InvalidFCS(u16),
+    InvalidFCS(u8),
     InvalidLength,
     MissingBoundaryFlag,
     AbortSequenceReceived,
@@ -200,6 +200,8 @@ impl Frame {
     /// - InvalidFCS: The FCS does not match the CRC
     /// - InvalidLength: The frame is too short
     /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
+    ///
+    /// If there is a checksum error, the number of the frame is wrapped in the error.
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 6 {
@@ -228,7 +230,7 @@ impl Frame {
         // We could check that the CRC of fame_type, num, data and fcs is 0,
         // but it requires a second CRC and is not necessary
         if fcs != expected_fcs {
-            return Err(FrameError::InvalidFCS(fcs));
+            return Err(FrameError::InvalidFCS(num));
         }
 
         // Create the frame content

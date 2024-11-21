@@ -3,7 +3,6 @@ use crate::{
     crc::crc_16_ccitt,
 };
 
-#[derive(Debug)]
 /// An error that may occur when working with frames.
 /// The following errors are possible:
 /// - InvalidFrameType: The frame type is invalid
@@ -11,6 +10,7 @@ use crate::{
 /// - InvalidLength: The frame is too short
 /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
 /// - ByteDestuffingError: An error occurred during byte destuffing
+#[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
     InvalidFCS(u16),
@@ -20,9 +20,9 @@ pub enum FrameError {
     DestuffingError,
 }
 
-#[repr(u8)]
 /// The type of a frame.
 /// The frame type is encoded as a single byte.
+#[repr(u8)]
 pub enum FrameType {
     /// Contains data to be transmitted
     Information = b'I',
@@ -98,6 +98,7 @@ impl Frame {
     pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     /// The size of a frame in bytes
+    ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
     /// - Content
@@ -127,6 +128,7 @@ impl Frame {
     }
 
     /// Initialize the content fields of the frame.
+    ///
     /// The following fields are initialized:
     /// - The frame content
     /// - The bit-stuffed version of the frame content
@@ -162,6 +164,7 @@ impl Frame {
     }
 
     /// Convert the frame to a vector of bytes encoded with byte stuffing.
+    ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
     /// - Content
@@ -180,6 +183,7 @@ impl Frame {
     }
 
     /// Create a new frame from the given bytes.
+    ///
     /// The frame is decoded as follows:
     /// - 1 byte: boundary flag
     /// - Content

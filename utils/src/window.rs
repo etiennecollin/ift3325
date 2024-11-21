@@ -1,5 +1,11 @@
 use crate::frame::Frame;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Condvar, Mutex},
+};
+
+pub type SafeWindow = Arc<Mutex<Window>>;
+pub type SafeCond = Arc<Condvar>;
 
 // Define the error type for the window
 #[derive(Debug)]

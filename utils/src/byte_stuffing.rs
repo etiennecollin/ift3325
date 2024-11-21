@@ -1,9 +1,11 @@
 use crate::frame::{Frame, FrameError};
 
 /// Perform byte stuffing on the given frame bytes.
+///
 /// This is done to avoid the byte being interpreted as a flag.
 /// How it works:
 /// - If a byte is equal to a flag, the escape flag is added before the byte and the byte has its 5th bit flipped.
+/// - Boundary flags are added at the start and end of the frame.
 pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
     let mut stuffed_frame: Vec<u8> = Vec::new();
 
@@ -22,10 +24,13 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Destuff the given frame bytes.
-/// This function removes the byte stuffing from the given frame bytes.
+///
+/// This function removes the byte stuffing from the given frame bytes and
+/// returns the original frame bytes.
 ///
 /// # Errors
 /// - If an abort sequence is detected
+/// - If the destuffing process fails because the frame is not properly formatted or incomplete
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 
@@ -34,9 +39,11 @@ pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     for byte in frame_bytes {
         // Handle the escape flag
         if escape && in_frame {
+            // Check if the byte is a boundary flag and if so, abort the sequence
             if *byte == Frame::BOUNDARY_FLAG {
                 return Err(FrameError::AbortSequenceReceived);
             }
+            // Add the byte to the frame and flip the 5th bit
             destuffed_frame.push(*byte ^ Frame::REPLACEMENT_POSITION);
             escape = false;
         } else {
@@ -44,9 +51,11 @@ pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
                 Frame::ESCAPE_FLAG => escape = true,
                 Frame::BOUNDARY_FLAG => {
                     if !in_frame {
+                        // Start of frame
                         in_frame = true;
                         continue;
                     } else {
+                        // End of frame
                         return Ok(destuffed_frame);
                     }
                 }

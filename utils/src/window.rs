@@ -81,7 +81,7 @@ impl Window {
     }
 
     /// Pop frames from the front of the window until the frame with the given number is reached
-    pub fn pop_until(&mut self, num: u8) -> usize {
+    pub fn pop_until(&mut self, num: u8, inclusive: bool) -> usize {
         let initial_len = self.frames.len();
 
         // Get the index of "limit" frame in the window
@@ -92,7 +92,11 @@ impl Window {
             .expect("Frame not found in window, this should never happen");
 
         // Pop the frames that were acknowledged
-        self.frames.drain(..i + 1);
+        if inclusive {
+            self.frames.drain(..i + 1);
+        } else {
+            self.frames.drain(..i);
+        }
 
         let final_len = self.frames.len();
 

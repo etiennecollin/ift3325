@@ -1,8 +1,8 @@
 use crate::{
-    frame::{Frame, FrameType},
+    frame::{Frame, FrameError, FrameType},
     window::{SafeCond, SafeWindow, Window},
 };
-use log::{error, info};
+use log::{error, info, warn};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -57,7 +57,7 @@ pub async fn handle_reception(
             let size = window.get_size() as u8;
 
             // Pop the acknowledged frames from the window
-            window.pop_until((frame.num - 1) % size);
+            window.pop_until((frame.num - 1) % size, true);
 
             // Notify the send task that space was created in the window
             condition.notify_one();
@@ -81,7 +81,7 @@ pub async fn handle_reception(
                 srej = window.srej;
 
                 // Pop the implicitly acknowledged frames from the window
-                window.pop_until(frame.num);
+                window.pop_until(frame.num, false);
 
                 // Select the frames to be resent
                 if srej {
@@ -149,8 +149,8 @@ pub async fn handle_reception(
                 .expect("Failed to send acknowledgment frame");
 
             info!(
-                "Received information frame {} with type {:X?} and sent acknowledgment",
-                frame.num, frame.frame_type
+                "Received information frame {} and sent acknowledgment",
+                frame.num,
             );
         }
         FrameType::ConnexionRequest => {
@@ -226,6 +226,7 @@ pub fn reader(
         let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
         let mut in_frame = false;
         loop {
+            // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
             let read_length = match stream.read(&mut buf).await {
                 Ok(read_length) => read_length,
@@ -235,8 +236,9 @@ pub fn reader(
                 }
             };
 
-            // TODO: Move this to a separate function in utils
+            // Iterate over the received bytes
             for byte in buf[..read_length].iter() {
+                // Check if the byte starts or ends a frame
                 if *byte == Frame::BOUNDARY_FLAG {
                     frame_buf.push(*byte);
 
@@ -245,10 +247,24 @@ pub fn reader(
                         // Create frame from buffer
                         let frame = match Frame::from_bytes(&frame_buf) {
                             Ok(frame) => frame,
+                            Err(FrameError::InvalidFCS(num)) => {
+                                warn!("Received frame with invalid FCS");
+                                // Send a rejection frame
+                                let reject_frame =
+                                    Frame::new(FrameType::Reject, num, Vec::new()).to_bytes();
+                                let writer_tx = writer_tx
+                                    .as_ref()
+                                    .expect("No sender provided to handle frame rejection");
+                                writer_tx
+                                    .send(reject_frame)
+                                    .await
+                                    .expect("Failed to send rejection frame");
+                                info!("Sent rejection frame for frame {}", num);
+                                break;
+                            }
                             Err(e) => {
-                                // TODO: Do we return or simply ignore errors here as there will be a retransmission?
                                 error!("Failed to create frame from buffer: {:?}", e);
-                                return Err("Connection ended with an error");
+                                break;
                             }
                         };
 

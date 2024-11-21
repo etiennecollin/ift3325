@@ -21,6 +21,8 @@ use std::{
     sync::{Arc, Condvar, Mutex},
 };
 use tokio::{
+    fs::{create_dir_all, File},
+    io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     sync::mpsc,
     task,
@@ -30,6 +32,8 @@ use utils::{
     io::{flatten, reader, writer},
     window::Window,
 };
+
+const OUTPUT_DIR: &str = "./output";
 
 /// The main function that initializes the server.
 ///
@@ -86,7 +90,7 @@ async fn main() {
                         Ok(status) => status,
                         Err(e) => {
                             error!("Failed to handle client: {}", e);
-                            return;
+                            false
                         }
                     };
 
@@ -197,6 +201,22 @@ async fn assembler(
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
     info!("Received data from: {:?}: {}", addr, data_trimmed);
+
+    // Create the output directory if it does not exist
+    create_dir_all(OUTPUT_DIR)
+        .await
+        .expect("Failed to create output directory");
+
+    // Save the data to a file
+    let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    let mut file = File::create(&filepath)
+        .await
+        .expect("Failed to create test file");
+    file.write_all(&data)
+        .await
+        .expect("Failed to write to file");
+
+    info!("Data saved to: {}", filepath);
 
     // Check if the client requested server shutdown
     if data_trimmed == "shutdown" {

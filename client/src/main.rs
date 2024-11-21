@@ -53,7 +53,7 @@ async fn main() {
         exit(1);
     }
 
-    // Parse the port number
+    // Parse the port number argument
     let port: u16 = match args[2].parse() {
         Ok(num) => num,
         Err(_) => {
@@ -62,7 +62,7 @@ async fn main() {
         }
     };
 
-    // Parse and validate the address format
+    // Parse and validate the address format from the arguments
     let addr = &*format!("{}:{}", &args[1], port);
     let socket_addr = match addr.parse::<SocketAddr>() {
         Ok(socket_addr) => socket_addr,
@@ -72,7 +72,18 @@ async fn main() {
         }
     };
 
+    // Get the file path argument
     let file_path = args[3].clone();
+
+    // Get the srej argument
+    let srej: u8 = match args[4].parse() {
+        Ok(0) => 0,
+        Ok(1) => 1,
+        _ => {
+            error!("Invalid srej value: {}", args[4]);
+            exit(1);
+        }
+    };
 
     // Connect to server
     let stream = match TcpStream::connect(socket_addr).await {
@@ -86,6 +97,20 @@ async fn main() {
         }
     };
 
+    setup_connection(stream, srej, file_path).await;
+}
+
+/// Sets up the connection with the server.
+///
+/// This function initializes the reader and writer tasks, sends the connection request frame,
+/// waits for the acknowledgment, and then sends the file to the server.
+/// It also handles resending frames in case of a timeout.
+///
+/// The function returns when all data has been sent.
+async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
+    // =========================================================================
+    // Setup the reader and writer tasks
+    // =========================================================================
     // Split the stream into read and write halves
     let (read, write) = stream.into_split();
 
@@ -102,12 +127,47 @@ async fn main() {
     let tx_clone = tx.clone();
     let window_clone = window.clone();
     let condition_clone = condition.clone();
-    let reader = reader(read, window_clone, condition_clone, Some(tx_clone));
+    let reader = reader(read, window_clone, condition_clone, Some(tx_clone), None);
 
     // Spawn the writer task which sends frames to the server
     let writer = writer(write, rx);
 
+    // =========================================================================
+    // Send connection request frame
+    // =========================================================================
+    let request_frame = Frame::new(FrameType::ConnexionRequest, srej, Vec::new());
+    let request_frame_bytes = request_frame.to_bytes();
+    {
+        let mut window = window.lock().expect("Failed to lock window");
+        window.srej = srej == 1;
+        window
+            .push(request_frame)
+            .expect("Failed to push frame to window");
+    }
+    tx.send(request_frame_bytes)
+        .await
+        .expect("Failed to send frame to writer task");
+    info!("Sent connection request frame");
+
+    // Run a timer to resend the frame if it is not acknowledged
+    let tx_clone = tx.clone();
+    let window_clone = window.clone();
+    create_frame_timer(window_clone, 0, tx_clone).await;
+
+    // Wait for the request to be acknowledged
+    {
+        let mut window = window.lock().expect("Failed to lock window");
+        while !window.is_empty() {
+            window = condition
+                .wait(window)
+                .expect("Failed to wait for condition");
+        }
+        window.connected = true;
+    }
+
+    // =========================================================================
     // Send the file to the server
+    // =========================================================================
     let tx_clone = tx.clone();
     let window_clone = window.clone();
     let condition_clone = condition.clone();
@@ -174,22 +234,24 @@ async fn send_file(
     }
 
     // Read the file in chunks and create the frames to be sent
-    let mut num: u8 = 0;
     for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
-        // Get the frame number based on the chunk index and the window size
-        num = (i % Window::SIZE) as u8;
-
-        // Create a new frame with the chunk data
-        let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
-        let frame_bytes = frame.to_bytes();
+        let frame_bytes: Vec<u8>;
+        let num: u8;
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
         {
             // Lock the window to access the frames
             let mut window = safe_window.lock().expect("Failed to lock window");
 
+            // Get the frame number based on the chunk index and the window size
+            num = (i % window.get_size()) as u8;
+
+            // Create a new frame with the chunk data
+            let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
+            frame_bytes = frame.to_bytes();
+
             // Wait for the window to have space
-            while window.isfull() {
+            while window.is_full() {
                 window = pop_condition
                     .wait(window)
                     .expect("Failed to wait for condition");
@@ -201,7 +263,9 @@ async fn send_file(
                 .expect("Failed to push frame to window, this should never happen");
         }
 
-        tx.send(frame_bytes).await.unwrap();
+        tx.send(frame_bytes)
+            .await
+            .expect("Failed to send frame to writer task");
 
         // Run a timer to resend the frame if it is not acknowledged
         let tx_clone = tx.clone();
@@ -221,14 +285,10 @@ async fn send_file(
     }
 
     // Send disconnect frame
-    let disconnection_frame_num = match num {
-        0 => 0,
-        _ => (num + 1) % Window::SIZE as u8,
-    };
-    let disconnection_frame =
-        Frame::new(FrameType::ConnexionEnd, disconnection_frame_num, Vec::new()).to_bytes();
-
-    tx.send(disconnection_frame).await.unwrap();
+    let disconnection_frame = Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
+    tx.send(disconnection_frame)
+        .await
+        .expect("Failed to send disconnection frame to writer task");
     Ok("Connection ended by client")
 }
 

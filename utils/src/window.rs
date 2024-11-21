@@ -19,28 +19,42 @@ pub enum WindowError {
 pub struct Window {
     pub frames: VecDeque<Frame>,
     pub resend_all: bool,
+    pub connected: bool,
+    pub srej: bool,
 }
 
 impl Window {
     /// Number of bits used for numbering frames
     pub const NUMBERING_BITS: usize = 3;
-    /// The maximum number of frames that can be in the window for a Go-Back-N protocol
-    pub const SIZE: usize = (1 << Self::NUMBERING_BITS) - 1;
     /// The maximum time in seconts to wait before a fame is considered lost
     pub const FRAME_TIMEOUT: u64 = 3;
+
+    const SIZE_GO_BACK_N: usize = (1 << Self::NUMBERING_BITS) - 1;
+    const SIZE_SREJ: usize = 1 << (Self::NUMBERING_BITS - 1);
 
     /// Create a new window
     /// The window is initially empty and has a capacity of `WINDOW_SIZE`
     pub fn new() -> Self {
         Self {
-            frames: VecDeque::with_capacity(Self::SIZE),
+            frames: VecDeque::with_capacity(Self::SIZE_GO_BACK_N),
             resend_all: false,
+            connected: false,
+            srej: false,
+        }
+    }
+
+    /// Get the maximum number of frames that can be in the window
+    pub fn get_size(&self) -> usize {
+        if self.srej {
+            Self::SIZE_SREJ
+        } else {
+            Self::SIZE_GO_BACK_N
         }
     }
 
     /// Push a frame to the back of the window
     pub fn push(&mut self, frame: Frame) -> Result<(), WindowError> {
-        if self.frames.len() == Self::SIZE {
+        if self.frames.len() == self.get_size() {
             return Err(WindowError::Full);
         } else {
             self.frames.push_back(frame);
@@ -49,9 +63,16 @@ impl Window {
         Ok(())
     }
 
+    /// Pop a frame from the front of the window and return it
+    ///
+    /// Returns `None` if the window is empty
+    pub fn pop_front(&mut self) -> Option<Frame> {
+        self.frames.pop_front()
+    }
+
     /// Check if the window is full
-    pub fn isfull(&self) -> bool {
-        self.frames.len() == Self::SIZE
+    pub fn is_full(&self) -> bool {
+        self.frames.len() == self.get_size()
     }
 
     /// Check if the window is empty

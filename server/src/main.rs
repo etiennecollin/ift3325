@@ -14,111 +14,22 @@
 //! Replace `<port_number>` with the desired port number (e.g., 8080).
 
 use log::{error, info};
-use std::{env, net::SocketAddr, process::exit};
+use std::{
+    env,
+    net::SocketAddr,
+    process::exit,
+    sync::{Arc, Condvar, Mutex},
+};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, Result},
     net::{TcpListener, TcpStream},
+    sync::mpsc,
     task,
 };
-use utils::frame::{Frame, FrameType};
-
-/// Handles incoming client connections.
-///
-/// This function reads data sent by the client, logs the received data,
-/// and checks if the client has requested to shut down the server.
-///
-/// # Arguments
-///
-/// * `stream` - The TCP stream associated with the connected client.
-/// * `addr` - The socket address of the client.
-///
-/// # Returns
-///
-/// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
-/// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
-async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<bool> {
-    info!("New client: {:?}", addr);
-
-    // FIXME: This is really bad. It's temporary code. The entire loop should be a util as it is
-    // used in the client as well.
-    let (mut read, mut write) = stream.split();
-
-    let mut frame_buf = [0; Frame::MAX_SIZE];
-    let mut frame_position = 0;
-    let mut in_frame = false;
-    loop {
-        let mut buf = [0; Frame::MAX_SIZE];
-        let read_length = read.read(&mut buf).await.unwrap();
-
-        for byte in buf[..read_length].iter() {
-            if *byte == Frame::BOUNDARY_FLAG {
-                frame_buf[frame_position] = *byte;
-                frame_position += 1;
-
-                // If the frame is complete, handle it
-                if in_frame {
-                    frame_position = 0;
-
-                    // Create frame from buffer
-                    let frame = Frame::from_bytes(&frame_buf).unwrap();
-
-                    // Handle the frame
-                    let mut end_connection = false;
-                    match frame.frame_type.into() {
-                        // If it is an acknowledgment, pop the acknowledged frames from the window
-                        FrameType::ReceiveReady => {
-                            info!("Received acknowledgement for frame {}", frame.num);
-                        }
-                        // If it is a rejection, pop the implicitly acknowledged frames from the window
-                        FrameType::Reject => {
-                            info!("Received reject for frame {}", frame.num);
-                        }
-                        // If it is a connection end frame, return true to stop the connection
-                        FrameType::ConnexionEnd => {
-                            end_connection = true;
-                        }
-                        _ => {}
-                    }
-
-                    // Convert the bytes to a string and print it
-                    let data_str = String::from_utf8_lossy(&frame.data);
-                    let data_trimmed = data_str.trim();
-                    info!("Received data from: {:?}: {}", addr, data_trimmed);
-
-                    // Send an acknowledgment and close the connection
-                    info!("Sending acknowledgment frame to: {:?}", addr);
-                    let ack_frame = Frame::new(FrameType::ReceiveReady, 1, Vec::new()).to_bytes();
-                    write.write_all(&ack_frame).await?;
-                    write.flush().await?;
-
-                    // Send a disconnection frame and close the connection
-                    info!("Sending disconnection frame to: {:?}", addr);
-                    let disconnection_frame =
-                        Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
-                    write.write_all(&disconnection_frame).await?;
-                    write.flush().await?;
-                    write.shutdown().await?;
-
-                    // Reset buffer
-                    frame_buf = [0; Frame::MAX_SIZE];
-                }
-
-                in_frame = !in_frame;
-            } else if in_frame {
-                // Add byte to frame buffer
-                frame_buf[frame_position] = *byte;
-                frame_position += 1;
-            }
-        }
-    }
-    //
-    // // Check if the client requested server shutdown
-    // if data_trimmed == "shutdown" {
-    //     Ok(true)
-    // } else {
-    //     Ok(false)
-    // }
-}
+use utils::{
+    frame::{Frame, FrameType},
+    io::{flatten, reader, writer},
+    window::Window,
+};
 
 /// The main function that initializes the server.
 ///
@@ -168,6 +79,7 @@ async fn main() {
         match listener.accept().await {
             Ok((stream, client_addr)) => {
                 // Spawn a new task to handle the client
+                info!("New client: {:?}", client_addr);
                 task::spawn(async move {
                     // Handle the client
                     let status = match handle_client(stream, client_addr).await {
@@ -183,6 +95,7 @@ async fn main() {
                         info!("Shutting down server");
                         exit(0);
                     }
+                    info!("Client connection ended: {:?}", client_addr);
                 });
             }
             Err(e) => {
@@ -191,6 +104,108 @@ async fn main() {
         }
     }
 }
+
+/// Handles incoming client connections.
+///
+/// This function reads data sent by the client, logs the received data,
+/// and checks if the client has requested to shut down the server.
+///
+/// # Arguments
+///
+/// * `stream` - The TCP stream associated with the connected client.
+/// * `addr` - The socket address of the client.
+///
+/// # Returns
+///
+/// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
+/// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
+async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'static str> {
+    // Split the stream into read and write halves
+    let (read, write) = stream.into_split();
+
+    // Create channel for tasks to send data to write to writer task
+    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(100);
+    // Create channel to reassemble frames
+    let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(100);
+
+    // Create a window to manage the frames
+    let window = Arc::new(Mutex::new(Window::new()));
+
+    // Create a condition to signal the send task that space is available in the window
+    let condition = Arc::new(Condvar::new());
+
+    // Spawn reader task which receives frames from the server
+    let write_tx_clone = write_tx.clone();
+    let assembler_tx_clone = assembler_tx.clone();
+    let window_clone = window.clone();
+    let condition_clone = condition.clone();
+    let reader = reader(
+        read,
+        window_clone,
+        condition_clone,
+        Some(write_tx_clone),
+        Some(assembler_tx_clone),
+    );
+
+    // Spawn the writer task which sends frames to the server
+    let writer = writer(write, write_rx);
+
+    let write_tx_clone = write_tx.clone();
+    let assembler =
+        tokio::spawn(async move { assembler(assembler_rx, write_tx_clone, addr).await });
+
+    // Drop the main transmit channel to allow the writer task to stop when
+    // all data is sent
+    drop(write_tx);
+    drop(assembler_tx);
+
+    // Wait for all data to be transmitted
+    match tokio::try_join!(flatten(reader), flatten(writer), flatten(assembler)) {
+        Ok((v1, v2, v3)) => {
+            info!("{}", v1);
+            info!("{}", v2);
+            let do_disconnect = v3.parse::<bool>().expect("Could not parse status returned by assembler as boolean. This should never happen.");
+            if do_disconnect {
+                info!("Client requested server shutdown");
+            }
+            Ok(do_disconnect)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn assembler(
+    mut assembler_rx: mpsc::Receiver<Vec<u8>>,
+    write_tx: mpsc::Sender<Vec<u8>>,
+    addr: SocketAddr,
+) -> Result<&'static str, &'static str> {
+    // Get all the data
+    let mut data: Vec<u8> = Vec::new();
+    while let Some(frame_data) = assembler_rx.recv().await {
+        data.extend_from_slice(&frame_data);
+    }
+
+    // Send disconnect signal to handle_client
+    let disconnection_frame = Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
+    write_tx
+        .send(disconnection_frame)
+        .await
+        .expect("Failed to send disconnection frame to writer task");
+    info!("Connection with {:?} ended by server", addr);
+
+    // Parse the data as a UTF-8 string
+    let data_str = String::from_utf8_lossy(&data);
+    let data_trimmed = data_str.trim();
+    info!("Received data from: {:?}: {}", addr, data_trimmed);
+
+    // Check if the client requested server shutdown
+    if data_trimmed == "shutdown" {
+        Ok("true")
+    } else {
+        Ok("false")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

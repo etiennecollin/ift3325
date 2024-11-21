@@ -49,7 +49,10 @@ async fn main() {
 
     // Check if the right number of arguments were provided
     if args.len() != 5 {
-        error!("Usage: {} <address> <port> <file> <0>", args[0]);
+        error!(
+            "Usage: {} <server_address> <server_port> <file> <0>",
+            args[0]
+        );
         exit(1);
     }
 

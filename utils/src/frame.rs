@@ -13,7 +13,7 @@ use crate::{
 #[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
-    InvalidFCS(u8),
+    InvalidFCS(u16),
     InvalidLength,
     MissingBoundaryFlag,
     AbortSequenceReceived,
@@ -36,6 +36,8 @@ pub enum FrameType {
     ConnexionEnd = b'F',
     /// Forces the receiver to send a response
     P = b'P',
+    /// Unknown frame type
+    Unknown = 0,
 }
 
 /// Convert a byte to a frame type.
@@ -48,7 +50,7 @@ impl From<u8> for FrameType {
             b'R' => FrameType::Reject,
             b'F' => FrameType::ConnexionEnd,
             b'P' => FrameType::P,
-            _ => panic!("Invalid frame type: {}", byte),
+            _ => FrameType::Unknown,
         }
     }
 }
@@ -230,11 +232,16 @@ impl Frame {
         // We could check that the CRC of fame_type, num, data and fcs is 0,
         // but it requires a second CRC and is not necessary
         if fcs != expected_fcs {
-            return Err(FrameError::InvalidFCS(num));
+            return Err(FrameError::InvalidFCS(fcs));
         }
 
-        // Create the frame content
-        let mut frame = Frame::new(FrameType::from(frame_type), num, data);
+        // Create the frame contenta
+        let frame_type = match FrameType::from(frame_type) {
+            FrameType::Unknown => return Err(FrameError::InvalidFrameType(frame_type)),
+            frame_type => frame_type,
+        };
+
+        let mut frame = Frame::new(frame_type, num, data);
         frame.fcs = Some(fcs);
         frame.content = Some(content);
         frame.content_stuffed = Some(bytes.to_vec());

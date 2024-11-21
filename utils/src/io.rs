@@ -201,6 +201,7 @@ pub async fn handle_reception(
         FrameType::P => {
             todo!("What to do with P frames?");
         }
+        FrameType::Unknown => {}
     }
 
     end_connection
@@ -225,6 +226,15 @@ pub fn reader(
     tokio::spawn(async move {
         let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
         let mut in_frame = false;
+        let mut last_num = None;
+        let window_size;
+        let srej;
+        {
+            let window = window.lock().expect("Failed to lock window");
+            window_size = window.get_size() as u8;
+            srej = window.srej;
+        }
+
         loop {
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
@@ -247,26 +257,58 @@ pub fn reader(
                         // Create frame from buffer
                         let frame = match Frame::from_bytes(&frame_buf) {
                             Ok(frame) => frame,
-                            Err(FrameError::InvalidFCS(num)) => {
-                                warn!("Received frame with invalid FCS");
-                                // Send a rejection frame
-                                let reject_frame =
-                                    Frame::new(FrameType::Reject, num, Vec::new()).to_bytes();
-                                let writer_tx = writer_tx
-                                    .as_ref()
-                                    .expect("No sender provided to handle frame rejection");
-                                writer_tx
-                                    .send(reject_frame)
-                                    .await
-                                    .expect("Failed to send rejection frame");
-                                info!("Sent rejection frame for frame {}", num);
-                                break;
-                            }
                             Err(e) => {
                                 error!("Failed to create frame from buffer: {:?}", e);
                                 break;
                             }
                         };
+
+                        // Check if a frame was dropped
+                        if let Some(last_num) = last_num {
+                            let expected_num = (last_num + 1) % window_size;
+                            if expected_num != frame.num {
+                                warn!(
+                                    "Dropped frame detected - Received: {}, Expected: {}",
+                                    frame.num, expected_num
+                                );
+
+                                let writer_tx = writer_tx
+                                    .as_ref()
+                                    .expect("No sender provided to handle frame rejection");
+
+                                // Send a rejection frame
+                                let reject_frame =
+                                    Frame::new(FrameType::Reject, expected_num, Vec::new())
+                                        .to_bytes();
+                                writer_tx
+                                    .send(reject_frame)
+                                    .await
+                                    .expect("Failed to send rejection frame");
+
+                                info!("Sent rejection frame for frame {}", expected_num);
+
+                                // If SREJ, reject all frames between the expected and the received frame
+                                // TODO: implement some kind of window to keep track of what was
+                                // received
+                                if srej {
+                                    let mut current_num = (expected_num + 1) % window_size;
+                                    while current_num != frame.num {
+                                        // Send a rejection frame
+                                        let reject_frame =
+                                            Frame::new(FrameType::Reject, current_num, Vec::new())
+                                                .to_bytes();
+                                        writer_tx
+                                            .send(reject_frame)
+                                            .await
+                                            .expect("Failed to send rejection frame");
+                                        info!("Sent rejection frame for frame {}", current_num);
+                                        current_num = (current_num + 1) % window_size;
+                                    }
+                                }
+                            }
+                        }
+
+                        last_num = Some(frame.num);
 
                         // Handle the frame and check if the connection should be terminated
                         if handle_reception(

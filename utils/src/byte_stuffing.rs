@@ -27,11 +27,13 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 /// # Errors
 /// - If an abort sequence is detected
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
-    let mut destuffed_frame: Vec<u8> = Vec::new();
+    let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 
     let mut escape: bool = false;
+    let mut in_frame: bool = false;
     for byte in frame_bytes {
-        if escape {
+        // Handle the escape flag
+        if escape && in_frame {
             if *byte == Frame::BOUNDARY_FLAG {
                 return Err(FrameError::AbortSequenceReceived);
             }
@@ -40,13 +42,20 @@ pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
         } else {
             match *byte {
                 Frame::ESCAPE_FLAG => escape = true,
-                Frame::BOUNDARY_FLAG => continue,
+                Frame::BOUNDARY_FLAG => {
+                    if !in_frame {
+                        in_frame = true;
+                        continue;
+                    } else {
+                        return Ok(destuffed_frame);
+                    }
+                }
                 _ => destuffed_frame.push(*byte),
             }
         }
     }
 
-    Ok(destuffed_frame)
+    Err(FrameError::DestuffingError)
 }
 
 #[cfg(test)]

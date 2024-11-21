@@ -29,6 +29,8 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
+    sync::mpsc,
+    time,
 };
 use utils::{
     frame::{Frame, FrameType},
@@ -54,14 +56,18 @@ type SafeCond = Arc<Condvar>;
 ///
 /// # Panics
 /// This function will panic if it fails to lock the window.
-fn handle_frame(frame: Frame, window: &SafeWindow, condition: &SafeCond) -> bool {
-    let mut window = window.lock().expect("Failed to lock window");
-
+async fn handle_frame(
+    tx: &mpsc::Sender<Vec<u8>>,
+    frame: Frame,
+    window: &SafeWindow,
+    condition: &SafeCond,
+) -> bool {
     // Check if the frame is an acknowledgment or a rejection
     let mut end_connection = false;
     match frame.frame_type.into() {
         // If it is an acknowledgment, pop the acknowledged frames from the window
         FrameType::ReceiveReady => {
+            let mut window = window.lock().expect("Failed to lock window");
             // Pop the acknowledged frames from the window
             window.pop_until((frame.num - 1) % Window::SIZE as u8);
 
@@ -72,9 +78,18 @@ fn handle_frame(frame: Frame, window: &SafeWindow, condition: &SafeCond) -> bool
         }
         // If it is a rejection, pop the implicitly acknowledged frames from the window
         FrameType::Reject => {
-            // Pop the implicitly acknowledged frames from the window
-            window.pop_until(frame.num);
-            window.resend = true;
+            let frames: Vec<Vec<u8>>;
+            {
+                let mut window = window.lock().expect("Failed to lock window");
+                // Pop the implicitly acknowledged frames from the window
+                window.pop_until(frame.num);
+                frames = window.frames.iter().map(|frame| frame.to_bytes()).collect()
+            }
+
+            // Resend the frames in the window
+            for frame in frames {
+                tx.send(frame).await.expect("Failed to resend frame");
+            }
 
             // Notify the send task that space was created in the window
             condition.notify_one();
@@ -99,12 +114,13 @@ fn handle_frame(frame: Frame, window: &SafeWindow, condition: &SafeCond) -> bool
 /// # Arguments
 /// * `stream` - The read half of the TCP stream.
 /// * `window` - The window to manage the frames.
-async fn receive(
+async fn reader(
     mut stream: OwnedReadHalf,
+    tx: mpsc::Sender<Vec<u8>>,
     window: SafeWindow,
-    condition: SafeCond,
+    pop_condition: SafeCond,
 ) -> Result<(), ()> {
-    let mut frame_buf = [0; Frame::MAX_SIZE];
+    let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
     let mut frame_position = 0;
     let mut in_frame = false;
     loop {
@@ -120,13 +136,10 @@ async fn receive(
         // TODO: Move this to a separate function in utils
         for byte in buf[..read_length].iter() {
             if *byte == Frame::BOUNDARY_FLAG {
-                frame_buf[frame_position] = *byte;
-                frame_position += 1;
+                frame_buf.push(*byte);
 
                 // If the frame is complete, handle it
                 if in_frame {
-                    frame_position = 0;
-
                     // Create frame from buffer
                     let frame = match Frame::from_bytes(&frame_buf) {
                         Ok(frame) => frame,
@@ -137,26 +150,49 @@ async fn receive(
                         }
                     };
 
-                    // Handle the frame
-                    let status = handle_frame(frame, &window, &condition);
-
-                    // We received a connection end frame, stop the connection
-                    if status {
+                    // Handle the frame and check if the connection should be terminated
+                    if handle_frame(&tx, frame, &window, &pop_condition).await {
                         return Ok(());
                     }
 
                     // Reset buffer
-                    frame_buf = [0; Frame::MAX_SIZE];
+                    frame_buf.clear();
                 }
 
                 in_frame = !in_frame;
             } else if in_frame {
                 // Add byte to frame buffer
-                frame_buf[frame_position] = *byte;
-                frame_position += 1;
+                frame_buf.push(*byte);
             }
         }
     }
+}
+
+/// Sends a frame to the server.
+///
+/// The function writes the frame bytes to the stream and flushes the stream.
+/// If an error occurs while sending the frame, the function returns an error.
+async fn writer(mut stream: OwnedWriteHalf, mut rx: mpsc::Receiver<Vec<u8>>) -> Result<(), ()> {
+    // Receive frames until all tx are dropped
+    while let Some(frame) = rx.recv().await {
+        // Send the file contents to the server
+        match stream.write_all(&frame).await {
+            Ok(it) => it,
+            Err(_) => return Err(()),
+        };
+        // Flush the stream to ensure the data is sent immediately
+        match stream.flush().await {
+            Ok(it) => it,
+            Err(_) => return Err(()),
+        };
+    }
+
+    // Close the connection
+    if let Err(e) = stream.shutdown().await {
+        error!("Failed to close connection: {}", e);
+        return Err(());
+    };
+    Ok(())
 }
 
 /// Sends a file to the specified server address.
@@ -176,10 +212,10 @@ async fn receive(
 /// - Opening the file
 /// - Reading the file contents
 /// - Sending the file contents to the server
-async fn send(
-    mut stream: OwnedWriteHalf,
+async fn send_file(
+    tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
-    condition: SafeCond,
+    pop_condition: SafeCond,
     file_path: String,
 ) -> Result<(), ()> {
     // Open the file
@@ -201,18 +237,15 @@ async fn send(
         return Err(());
     }
 
-    // TODO: Add async tasks to handle the timers and retransmissions
-
     // Read the file in chunks and create the frames to be sent
     let mut num: u8 = 0;
     for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
-        // Create a new frame with the chunk data
         // Get the frame number based on the chunk index and the window size
         num = (i % Window::SIZE) as u8;
+
+        // Create a new frame with the chunk data
         let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
         let frame_bytes = frame.to_bytes();
-
-        let mut resend_frames: Option<Vec<(u8, Vec<u8>)>> = None;
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
         {
@@ -221,22 +254,9 @@ async fn send(
 
             // Wait for the window to have space
             while window.isfull() {
-                window = condition
+                window = pop_condition
                     .wait(window)
                     .expect("Failed to wait for condition");
-            }
-
-            // Check if we need to resend the frames in the window
-            if window.resend {
-                // Collect the frames to be resent
-                let frames = window
-                    .frames
-                    .iter()
-                    .map(|frame| (frame.num, frame.to_bytes()))
-                    .collect();
-
-                resend_frames = Some(frames);
-                window.resend = false;
             }
 
             // Push the frame to the window
@@ -245,34 +265,12 @@ async fn send(
                 .expect("Failed to push frame to window, this should never happen");
         }
 
-        // Resend the frames in the window if needed
-        if let Some(frames) = resend_frames {
-            for (num, frame) in frames {
-                // Send the file contents to the server
-                match stream.write_all(&frame).await {
-                    Ok(_) => info!("Resent frame number {}", num),
-                    Err(e) => {
-                        error!("Failed to resend frame number {}: {}", num, e);
-                    }
-                };
-                // Flush the stream to ensure the data is sent immediately
-                stream.flush().await.expect("Failed to flush stream");
-            }
-        };
+        tx.send(frame_bytes).await.unwrap();
 
-        // Send the file contents to the server
-        match stream.write_all(&frame_bytes).await {
-            Ok(_) => info!("Sent chunk {} with frame number {} to the server", i, {
-                num
-            }),
-            Err(e) => {
-                error!("Failed to send file contents of chunk {}: {}", i, e);
-                exit(1);
-            }
-        }
-
-        // Flush the stream to ensure the data is sent immediately
-        stream.flush().await.expect("Failed to flush stream");
+        // Run a timer to resend the frame if it is not acknowledged
+        let tx_clone = tx.clone();
+        let safe_window_clone = safe_window.clone();
+        create_timer(safe_window_clone, num, tx_clone).await;
     }
 
     // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
@@ -280,7 +278,7 @@ async fn send(
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
         while !window.is_empty() {
-            window = condition
+            window = pop_condition
                 .wait(window)
                 .expect("Failed to wait for condition");
         }
@@ -293,20 +291,40 @@ async fn send(
     };
     let disconnection_frame =
         Frame::new(FrameType::ConnexionEnd, disconnection_frame_num, Vec::new()).to_bytes();
-    match stream.write_all(&disconnection_frame).await {
-        Ok(_) => info!("Sent disconnection frame to the server"),
-        Err(e) => error!("Failed to send disconnection frame: {}", e),
-    };
 
-    // Close the connection
-    if let Err(e) = stream.shutdown().await {
-        error!("Failed to close connection: {}", e);
-        return Err(());
-    };
+    tx.send(disconnection_frame).await.unwrap();
 
     Ok(())
 }
 
+async fn create_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>) {
+    tokio::spawn(async move {
+        let mut interval = time::interval(time::Duration::from_secs(Window::FRAME_TIMEOUT));
+        loop {
+            interval.tick().await;
+            let frame;
+
+            // Lock the window for as short a time as possible
+            {
+                let window = safe_window.lock().expect("Failed to lock window");
+
+                // Check if the frame is still in the window and get its bytes
+                frame = match window.frames.iter().find(|frame| frame.num == num) {
+                    Some(frame) => Some(frame.to_bytes()),
+                    None => None,
+                };
+            }
+
+            // Send the frame if it is still in the window
+            // If the frame is not in the window, it has been acknowledged and the task can stop
+            if let Some(frame) = frame {
+                tx.send(frame).await.unwrap();
+            } else {
+                break;
+            }
+        }
+    });
+}
 /// The main function that initializes the client.
 ///
 /// This function sets up logging, processes command-line arguments to extract the server address,
@@ -366,6 +384,9 @@ async fn main() {
     // Split the stream into read and write halves
     let (read, write) = stream.into_split();
 
+    // Create channel for tasks to send data to write to writer task
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(100);
+
     // Create a window to manage the frames
     let window = Arc::new(Mutex::new(Window::new()));
 
@@ -373,27 +394,40 @@ async fn main() {
     let condition = Arc::new(Condvar::new());
 
     // Receive the frames from the server
+    let tx_clone = tx.clone();
     let window_clone = window.clone();
     let condition_clone = condition.clone();
     let reader = tokio::spawn(async move {
-        match receive(read, window_clone, condition_clone).await {
+        match reader(read, tx_clone, window_clone, condition_clone).await {
             Ok(_) => info!("Connection ended by server"),
             Err(_) => error!("Connection ended with an error"),
         };
     });
 
+    let writer = tokio::spawn(async move {
+        match writer(write, rx).await {
+            Ok(_) => info!("Closed writer"),
+            Err(_) => error!("Error in writer"),
+        };
+    });
+
     // Send the file to the server
+    let tx_clone = tx.clone();
     let window_clone = window.clone();
     let condition_clone = condition.clone();
     let sender = tokio::spawn(async move {
-        match send(write, window_clone, condition_clone, file_path).await {
+        match send_file(tx_clone, window_clone, condition_clone, file_path).await {
             Ok(_) => info!("Connection ended by client"),
             Err(_) => error!("Failed to send file"),
         };
     });
 
+    // Drop the main transmit channel to allow the writer task to stop when
+    // all data is sent
+    drop(tx);
+
     // Wait for all data to be transmitted
-    let _ = tokio::try_join!(sender, reader);
+    let _ = tokio::try_join!(reader, writer, sender);
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ pub enum FrameError {
     InvalidLength,
     MissingBoundaryFlag,
     AbortSequenceReceived,
+    DestuffingError,
 }
 
 #[repr(u8)]
@@ -202,25 +203,12 @@ impl Frame {
         }
 
         // The frame should start with a boundary flag
-        if bytes[0] != Frame::BOUNDARY_FLAG {
+        if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
             return Err(FrameError::MissingBoundaryFlag);
         }
 
-        // Find position of the last boundary flag
-        let last_flag_pos = match bytes[1..]
-            .iter()
-            .rev()
-            .position(|&byte| byte == Frame::BOUNDARY_FLAG)
-        {
-            Some(i) => {
-                // Add one since we iter on bytes[1..]
-                i + 1
-            }
-            None => return Err(FrameError::MissingBoundaryFlag),
-        };
-
         // Destuff the frame content
-        let content = byte_destuffing(&bytes[..last_flag_pos + 1])?;
+        let content = byte_destuffing(bytes)?;
 
         // Extract the frame information
         let frame_type = content[0];
@@ -243,7 +231,7 @@ impl Frame {
         let mut frame = Frame::new(FrameType::from(frame_type), num, data);
         frame.fcs = Some(fcs);
         frame.content = Some(content);
-        frame.content_stuffed = Some(bytes[..last_flag_pos + 1].to_vec());
+        frame.content_stuffed = Some(bytes.to_vec());
 
         Ok(frame)
     }
@@ -373,6 +361,8 @@ mod tests {
     fn frame_empty_data_test() {
         let frame = Frame::new(FrameType::ConnexionRequest, 0x02, vec![]);
         let bytes = frame.to_bytes();
+
+        println!("Bytes RAW: {:X?}", bytes);
 
         // Set the expected values
         let expected_fcs = 0x78DDu16;

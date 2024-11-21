@@ -12,7 +12,7 @@ pub enum WindowError {
 /// It implements a deque with a maximum size of `WINDOW_SIZE`.
 pub struct Window {
     pub frames: VecDeque<Frame>,
-    pub resend: bool,
+    pub resend_all: bool,
 }
 
 impl Window {
@@ -20,7 +20,7 @@ impl Window {
     pub const NUMBERING_BITS: usize = 3;
     /// The maximum number of frames that can be in the window for a Go-Back-N protocol
     pub const SIZE: usize = (1 << Self::NUMBERING_BITS) - 1;
-    /// The maximum time to wait before a fame is considered lost
+    /// The maximum time in seconts to wait before a fame is considered lost
     pub const FRAME_TIMEOUT: u64 = 3;
 
     /// Create a new window
@@ -28,7 +28,7 @@ impl Window {
     pub fn new() -> Self {
         Self {
             frames: VecDeque::with_capacity(Self::SIZE),
-            resend: false,
+            resend_all: false,
         }
     }
 
@@ -61,10 +61,8 @@ impl Window {
         let i = self
             .frames
             .iter()
-            .enumerate()
-            .find(|(_, frame)| frame.num == num)
-            .expect("Frame not found in window, this should never happen")
-            .0;
+            .position(|frame| frame.num == num)
+            .expect("Frame not found in window, this should never happen");
 
         // Pop the frames that were acknowledged
         self.frames.drain(..i + 1);

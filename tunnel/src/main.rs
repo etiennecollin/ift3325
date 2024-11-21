@@ -1,14 +1,11 @@
 use log::{error, info, warn};
-use std::{env, net::SocketAddr, process::exit, sync::Arc};
+use std::{env, net::SocketAddr, process::exit};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
     task,
 };
 use utils::frame::Frame;
-
-type SafeStream = Arc<Mutex<TcpStream>>;
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
@@ -76,18 +73,6 @@ async fn main() {
         }
     };
 
-    // Connect to server
-    let server_stream = match TcpStream::connect(server_addr).await {
-        Ok(stream) => {
-            info!("Connected to server at {}", server_addr);
-            Arc::new(Mutex::new(stream))
-        }
-        Err(e) => {
-            error!("Failed to connect to server: {}", e);
-            exit(1);
-        }
-    };
-
     // Bind to the address and port
     let local_addr = SocketAddr::from(([127, 0, 0, 1], local_port));
     let listener = match TcpListener::bind(local_addr).await {
@@ -108,7 +93,20 @@ async fn main() {
             Ok((stream, client_addr)) => {
                 // Spawn a new task to handle the client
                 info!("New client: {:?}", client_addr);
-                let server_stream = server_stream.clone();
+
+                // Connect to server
+                let server_stream = match TcpStream::connect(server_addr).await {
+                    Ok(stream) => {
+                        info!("Connected to server at {}", server_addr);
+                        stream
+                    }
+                    Err(e) => {
+                        error!("Failed to connect to server: {}", e);
+                        exit(1);
+                    }
+                };
+
+                // Handle the client
                 task::spawn(async move {
                     handle_client(stream, server_stream, drop_probability, flip_probability).await;
                 });
@@ -122,7 +120,7 @@ async fn main() {
 
 async fn handle_client(
     mut client_stream: TcpStream,
-    server_stream: SafeStream,
+    mut server_stream: TcpStream,
     drop_probability: f32,
     flip_probability: f32,
 ) {
@@ -131,6 +129,7 @@ async fn handle_client(
         // Read client stream
         // =====================================================================
         let mut from_client = [0; Frame::MAX_SIZE];
+        info!("Reading from client stream");
         let read_length = match client_stream.read(&mut from_client).await {
             Ok(read_length) => read_length,
             Err(e) => {
@@ -140,7 +139,7 @@ async fn handle_client(
         };
 
         if read_length == 0 {
-            // The client closed the connection
+            warn!("Client closed the connection");
             break;
         }
 
@@ -167,8 +166,8 @@ async fn handle_client(
         // Send the frame to server
         // =====================================================================
 
-        let mut server_stream = server_stream.lock().await;
         // Send the file contents to the server
+        info!("Writing to server stream");
         match server_stream.write_all(&from_client).await {
             Ok(it) => it,
             Err(_) => {
@@ -189,6 +188,7 @@ async fn handle_client(
         // =====================================================================
         // Read server stream
         // =====================================================================
+        info!("Reading from server stream");
         let mut from_server = [0; Frame::MAX_SIZE];
         let read_length = match server_stream.read(&mut from_server).await {
             Ok(read_length) => read_length,
@@ -199,7 +199,7 @@ async fn handle_client(
         };
 
         if read_length == 0 {
-            // The client closed the connection
+            warn!("Server closed the connection");
             break;
         }
 
@@ -226,6 +226,7 @@ async fn handle_client(
         // Send the frame to client
         // =====================================================================
 
+        info!("Writing to client stream");
         // Send the file contents to the server
         match client_stream.write_all(&from_server).await {
             Ok(it) => it,
@@ -244,4 +245,11 @@ async fn handle_client(
             }
         };
     }
+
+    if server_stream.shutdown().await.is_err() {
+        error!("Failed to shutdown server stream");
+    };
+    if client_stream.shutdown().await.is_err() {
+        error!("Failed to shutdown client stream");
+    };
 }

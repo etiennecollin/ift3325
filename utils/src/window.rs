@@ -1,3 +1,5 @@
+use log::debug;
+
 use crate::frame::Frame;
 use std::{
     collections::VecDeque,
@@ -26,6 +28,8 @@ pub struct Window {
 impl Window {
     /// Number of bits used for numbering frames
     pub const NUMBERING_BITS: usize = 3;
+    /// The maximum number a frame can take
+    pub const MAX_FRAME_NUM: u8 = 1 << Self::NUMBERING_BITS;
     /// The maximum time in seconts to wait before a fame is considered lost
     pub const FRAME_TIMEOUT: u64 = 3;
 
@@ -66,13 +70,23 @@ impl Window {
     /// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    pub fn pop_front(&mut self) -> Option<Frame> {
-        self.frames.pop_front()
+    pub fn pop_front(&mut self, condition: &SafeCond) -> Option<Frame> {
+        let popped = self.frames.pop_front();
+
+        // Notify the send task that space was created in the window
+        condition.notify_one();
+
+        popped
     }
 
     /// Check if the window is full
     pub fn is_full(&self) -> bool {
         self.frames.len() == self.get_size()
+    }
+
+    /// Check if the window contains a frame with the given number
+    pub fn contains(&self, num: u8) -> bool {
+        self.frames.iter().any(|frame| frame.num == num)
     }
 
     /// Check if the window is empty
@@ -81,15 +95,17 @@ impl Window {
     }
 
     /// Pop frames from the front of the window until the frame with the given number is reached
-    pub fn pop_until(&mut self, num: u8, inclusive: bool) -> usize {
+    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) -> usize {
         let initial_len = self.frames.len();
 
         // Get the index of "limit" frame in the window
-        let i = self
-            .frames
-            .iter()
-            .position(|frame| frame.num == num)
-            .expect("Frame not found in window, this should never happen");
+        let i = match self.frames.iter().position(|frame| frame.num == num) {
+            Some(i) => i,
+            None => {
+                debug!("Frame not found in window, this means it was already acknowledged");
+                return 0;
+            }
+        };
 
         // Pop the frames that were acknowledged
         if inclusive {
@@ -97,6 +113,9 @@ impl Window {
         } else {
             self.frames.drain(..i);
         }
+
+        // Notify the send task that space was created in the window
+        condition.notify_one();
 
         let final_len = self.frames.len();
 

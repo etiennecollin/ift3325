@@ -28,7 +28,6 @@ use tokio::{
     task,
 };
 use utils::{
-    frame::{Frame, FrameType},
     io::{flatten, reader, writer},
     window::Window,
 };
@@ -115,12 +114,10 @@ async fn main() {
 /// and checks if the client has requested to shut down the server.
 ///
 /// # Arguments
-///
 /// * `stream` - The TCP stream associated with the connected client.
 /// * `addr` - The socket address of the client.
 ///
 /// # Returns
-///
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
 /// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
 async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'static str> {
@@ -154,9 +151,8 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
     // Spawn the writer task which sends frames to the server
     let writer = writer(write, write_rx);
 
-    let write_tx_clone = write_tx.clone();
-    let assembler =
-        tokio::spawn(async move { assembler(assembler_rx, write_tx_clone, addr).await });
+    // Spawn the assembler task which reassembles frames
+    let assembler = tokio::spawn(async move { assembler(assembler_rx, addr).await });
 
     // Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -180,22 +176,13 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
 
 async fn assembler(
     mut assembler_rx: mpsc::Receiver<Vec<u8>>,
-    write_tx: mpsc::Sender<Vec<u8>>,
     addr: SocketAddr,
 ) -> Result<&'static str, &'static str> {
-    // Get all the data
+    // Get all the data until the connection is closed
     let mut data: Vec<u8> = Vec::new();
     while let Some(frame_data) = assembler_rx.recv().await {
         data.extend_from_slice(&frame_data);
     }
-
-    // Send disconnect signal to handle_client
-    let disconnection_frame = Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
-    write_tx
-        .send(disconnection_frame)
-        .await
-        .expect("Failed to send disconnection frame to writer task");
-    info!("Connection with {:?} ended by server", addr);
 
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);

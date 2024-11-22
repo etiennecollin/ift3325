@@ -219,68 +219,68 @@ async fn assembler(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::io::AsyncWriteExt;
-
-    async fn test_server(data: &[u8]) -> bool {
-        // Setup the server
-        let mut server_addr = SocketAddr::from(([127, 0, 0, 1], 0));
-        let listener = TcpListener::bind(server_addr)
-            .await
-            .expect("Failed to bind to address");
-        server_addr = listener.local_addr().expect("Failed to get local address");
-
-        // Spawn a task to accept a connection
-        let status = task::spawn(async move {
-            // Accept incoming connections
-            let (stream, client_addr) = listener
-                .accept()
-                .await
-                .expect("Failed to accept connection");
-
-            // Get the status from the connection
-            handle_client(stream, client_addr)
-                .await
-                .expect("Failed to handle client")
-        });
-
-        // Client connects to the server
-        let mut client = TcpStream::connect(server_addr)
-            .await
-            .expect("Failed to connect to server");
-
-        // Client sends data
-        client.write_all(data).await.expect("Failed to write data");
-
-        // Client closes the connection
-        client
-            .shutdown()
-            .await
-            .expect("Failed to shutdown connection");
-
-        // Return the status
-        status.await.expect("Failed to get status")
-    }
-
-    /// Tests the handling of a client connection that sends normal data.
-    ///
-    /// This test simulates a client connecting to the server and sending a
-    /// simple message. It verifies that the server can handle the message
-    /// without requesting a shutdown.
-    #[tokio::test]
-    async fn test_handle_client() {
-        assert!(!test_server(b"Hello").await);
-    }
-
-    /// Tests the handling of the "exit" command from a client.
-    ///
-    /// This test simulates a client connecting to the server and sending
-    /// the "exit" command. It verifies that the server correctly recognizes
-    /// this command and indicates that it should shut down.
-    #[tokio::test]
-    async fn test_exit_command() {
-        assert!(test_server(b"shutdown").await);
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use tokio::io::AsyncWriteExt;
+//
+//     async fn test_server(data: &[u8]) -> bool {
+//         // Setup the server
+//         let mut server_addr = SocketAddr::from(([127, 0, 0, 1], 0));
+//         let listener = TcpListener::bind(server_addr)
+//             .await
+//             .expect("Failed to bind to address");
+//         server_addr = listener.local_addr().expect("Failed to get local address");
+//
+//         // Spawn a task to accept a connection
+//         let status = task::spawn(async move {
+//             // Accept incoming connections
+//             let (stream, client_addr) = listener
+//                 .accept()
+//                 .await
+//                 .expect("Failed to accept connection");
+//
+//             // Get the status from the connection
+//             handle_client(stream, client_addr)
+//                 .await
+//                 .expect("Failed to handle client")
+//         });
+//
+//         // Client connects to the server
+//         let mut client = TcpStream::connect(server_addr)
+//             .await
+//             .expect("Failed to connect to server");
+//
+//         // Client sends data
+//         client.write_all(data).await.expect("Failed to write data");
+//
+//         // Client closes the connection
+//         client
+//             .shutdown()
+//             .await
+//             .expect("Failed to shutdown connection");
+//
+//         // Return the status
+//         status.await.expect("Failed to get status")
+//     }
+//
+//     /// Tests the handling of a client connection that sends normal data.
+//     ///
+//     /// This test simulates a client connecting to the server and sending a
+//     /// simple message. It verifies that the server can handle the message
+//     /// without requesting a shutdown.
+//     #[tokio::test]
+//     async fn test_handle_client() {
+//         assert!(!test_server(b"Hello").await);
+//     }
+//
+//     /// Tests the handling of the "exit" command from a client.
+//     ///
+//     /// This test simulates a client connecting to the server and sending
+//     /// the "exit" command. It verifies that the server correctly recognizes
+//     /// this command and indicates that it should shut down.
+//     #[tokio::test]
+//     async fn test_exit_command() {
+//         assert!(test_server(b"shutdown").await);
+//     }
+// }

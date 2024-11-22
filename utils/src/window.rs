@@ -21,8 +21,9 @@ pub enum WindowError {
 pub struct Window {
     pub frames: VecDeque<Frame>,
     pub resend_all: bool,
-    pub connected: bool,
+    pub is_connected: bool,
     pub srej: bool,
+    pub waiting_disconnect: bool,
 }
 
 impl Window {
@@ -43,8 +44,9 @@ impl Window {
         Self {
             frames: VecDeque::with_capacity(Self::SIZE_GO_BACK_N),
             resend_all: false,
-            connected: false,
+            is_connected: false,
             srej: false,
+            waiting_disconnect: false,
         }
     }
 

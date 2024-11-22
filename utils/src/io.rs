@@ -136,7 +136,7 @@ pub async fn handle_reception(
                 let mut window = safe_window.lock().expect("Failed to lock window");
 
                 // Ignore the frame if the connection is not established
-                if !window.connected {
+                if !window.is_connected {
                     return false;
                 }
 
@@ -151,76 +151,26 @@ pub async fn handle_reception(
             info!("Received acknowledgement up to frame {}", frame.num);
         }
 
-        // If it is a rejection, pop the implicitly acknowledged frames from the window
-        FrameType::Reject => {
-            let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
-
-            let frames: Vec<(u8, Vec<u8>)>;
-            {
-                let mut window = safe_window.lock().expect("Failed to lock window");
-
-                // Ignore the frame if the connection is not established
-                if !window.connected {
-                    return false;
-                }
-                let srej = window.srej;
-
-                // Pop the implicitly acknowledged frames from the window
-                window.pop_until(
-                    (frame.num + (Window::MAX_FRAME_NUM - 1)) % Window::MAX_FRAME_NUM,
-                    true,
-                    condition,
-                );
-
-                // Select the frames to be resent
-                if srej {
-                    // Select the frame to resend
-                    let selected_frame = window
-                        .frames
-                        .iter()
-                        .find(|f| f.num == frame.num)
-                        .expect("Frame not found in window, this should never happen")
-                        .to_bytes();
-
-                    frames = vec![(frame.num, selected_frame)];
-                    info!("Received SREJ for frame {}", frame.num);
-                } else {
-                    // Select all frames to be resent
-                    frames = window
-                        .frames
-                        .iter()
-                        .map(|frame| (frame.num, frame.to_bytes()))
-                        .collect();
-                    info!("Received REJ for frame {}", frame.num);
-                }
-            }
-
-            warn!(
-                "Resending frames {:?}",
-                frames.iter().map(|(num, _)| num).collect::<Vec<_>>()
-            );
-
-            // Resend the frames
-            for (_, frame) in frames {
-                writer_tx.send(frame).await.expect("Failed to resend frame");
-            }
-        }
         // If it is a connection end frame, return true to stop the connection
         FrameType::ConnexionEnd => {
-            let is_window_empty: bool;
+            let is_waiting_disconnect: bool;
             {
                 let mut window = safe_window.lock().expect("Failed to lock window");
-                window.connected = false;
-                is_window_empty = window.is_empty();
+                window.is_connected = false;
+                is_waiting_disconnect = window.waiting_disconnect;
             }
             end_connection = true;
+            info!("Received connection end frame");
 
             // If the window is empty, then we are not the ones initiating the connection
             // and we should send an acknowledgment. Else, we should pop the connection request
             // frame from our window as it was acknowledged.
             //
             // This works as the connection request is always the last frame to be sent.
-            if is_window_empty {
+            if is_waiting_disconnect {
+                let mut window = safe_window.lock().expect("Failed to lock window");
+                window.pop_front(condition);
+            } else {
                 // Send an acknowledgment for the connection request frame
                 let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
                 let ack_frame = Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
@@ -229,21 +179,16 @@ pub async fn handle_reception(
                     .await
                     .expect("Failed to send acknowledgment frame");
 
-                info!("Received connection request and sent acknowledgment");
-            } else {
-                let mut window = safe_window.lock().expect("Failed to lock window");
-                window.pop_front(condition);
-                info!("Received acknowledgment for connection request frame");
+                info!("Sent connection end acknowledgment");
             }
-
-            info!("Received connection end frame");
         }
+
         FrameType::ConnectionStart => {
             // Initialize the window
             let is_window_empty: bool;
             {
                 let mut window = safe_window.lock().expect("Failed to lock window");
-                window.connected = true;
+                window.is_connected = true;
                 is_window_empty = window.is_empty();
 
                 // If the window is empty, then we are not the ones initiating the connection and
@@ -283,9 +228,64 @@ pub async fn handle_reception(
                 info!("Received acknowledgment for connection request frame");
             }
         }
+
+        FrameType::Reject => {
+            let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
+
+            let frames: Vec<(u8, Vec<u8>)>;
+            {
+                let mut window = safe_window.lock().expect("Failed to lock window");
+
+                // Ignore the frame if the connection is not established
+                if !window.is_connected {
+                    return false;
+                }
+                let srej = window.srej;
+
+                // Pop the implicitly acknowledged frames from the window
+                window.pop_until(
+                    (frame.num + (Window::MAX_FRAME_NUM - 1)) % Window::MAX_FRAME_NUM,
+                    true,
+                    condition,
+                );
+
+                // Select the frames to be resent
+                if srej {
+                    // Select the frame to resend
+                    let selected_frame = window
+                        .frames
+                        .iter()
+                        .find(|f| f.num == frame.num)
+                        .expect("Frame not found in window, this should never happen")
+                        .to_bytes();
+
+                    frames = vec![(frame.num, selected_frame)];
+                    warn!("Received SREJ for frame {}", frame.num);
+                } else {
+                    // Select all frames to be resent
+                    frames = window
+                        .frames
+                        .iter()
+                        .map(|frame| (frame.num, frame.to_bytes()))
+                        .collect();
+                    warn!("Received REJ for frame {}", frame.num);
+                }
+            }
+
+            // Resend the frames
+            for (num, frame) in frames {
+                info!("Resending frame {}", num);
+                writer_tx.send(frame).await.expect("Failed to resend frame");
+            }
+        }
+
         FrameType::Information => {
             // Ignore the frame if the connection is not established
-            if !safe_window.lock().expect("Failed to lock window").connected {
+            if !safe_window
+                .lock()
+                .expect("Failed to lock window")
+                .is_connected
+            {
                 return false;
             }
 
@@ -353,9 +353,11 @@ pub async fn handle_reception(
             info!("Received frame {}", frame.num,);
             info!("Sent ack until frame {}", *expected_info_num)
         }
+
         FrameType::P => {
             todo!("What to do with P frames?");
         }
+
         FrameType::Unknown => {}
     }
 
@@ -420,10 +422,12 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
         loop {
             interval.tick().await;
             let frame;
+            let is_connected;
 
             // Lock the window for as short a time as possible
             {
                 let window = safe_window.lock().expect("Failed to lock window");
+                is_connected = window.is_connected;
 
                 // Check if the frame is still in the window and get its bytes
                 frame = window
@@ -435,9 +439,9 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
 
             // Send the frame if it is still in the window
             // If the frame is not in the window, it has been acknowledged and the task can stop
-            if let Some(frame) = frame {
+            if is_connected && frame.is_some() {
                 warn!("Timeout expired, resending frame {}", num);
-                tx.send(frame).await.expect("Failed to send frame");
+                tx.send(frame.unwrap()).await.expect("Failed to send frame");
             } else {
                 break;
             }
@@ -482,6 +486,8 @@ pub async fn connection_request(
     {
         let mut window = window.lock().expect("Failed to lock window");
 
+        window.waiting_disconnect = !connection_start;
+
         // Only set the SREJ bit if it is provided
         if connection_start {
             window.srej = srej == 1;
@@ -511,6 +517,6 @@ pub async fn connection_request(
                 .wait(window)
                 .expect("Failed to wait for condition");
         }
-        window.connected = true;
+        window.is_connected = true;
     }
 }

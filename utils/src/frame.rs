@@ -207,14 +207,14 @@ impl Frame {
     /// If there is a checksum error, the number of the frame is wrapped in the error.
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
-        if bytes.len() < 6 {
+        if bytes.len() < 4 {
             return Err(FrameError::InvalidLength(bytes.len()));
         }
 
         // The frame should start with a boundary flag
-        if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
-            return Err(FrameError::MissingBoundaryFlag);
-        }
+        // if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
+        //     return Err(FrameError::MissingBoundaryFlag);
+        // }
 
         // Destuff the frame content
         let content = byte_destuffing(bytes)?;

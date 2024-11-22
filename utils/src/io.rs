@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::{
-    frame::{Frame, FrameType},
+    frame::{Frame, FrameError, FrameType},
     window::{SafeCond, SafeWindow, Window},
 };
 use log::{error, info, warn};
@@ -33,7 +33,6 @@ pub fn reader(
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
         let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
-        let mut in_frame = false;
         let mut next_info_frame_num: u8 = 0;
 
         loop {
@@ -51,42 +50,33 @@ pub fn reader(
             for byte in buf[..read_length].iter() {
                 // Check if the byte starts or ends a frame
                 if *byte == Frame::BOUNDARY_FLAG {
-                    frame_buf.push(*byte);
-
-                    // If the frame is complete, handle it
-                    if in_frame {
-                        // Create frame from buffer
-                        let frame = match Frame::from_bytes(&frame_buf) {
-                            Ok(frame) => frame,
-                            Err(e) => {
-                                warn!("Failed to create frame from buffer: {:X?}", e);
-                                frame_buf.clear();
-                                in_frame = false;
-                                continue;
-                            }
-                        };
-
-                        // Handle the frame and check if the connection should be terminated
-                        if handle_reception(
-                            frame,
-                            &window,
-                            &condition,
-                            writer_tx.as_ref(),
-                            assembler_tx.as_ref(),
-                            &mut next_info_frame_num,
-                        )
-                        .await
-                        {
-                            return Ok("Connection ended by server");
+                    // Create frame from buffer
+                    let frame = match Frame::from_bytes(&frame_buf) {
+                        Ok(frame) => frame,
+                        Err(e) => {
+                            warn!("Received bad frame: {:X?}", e);
+                            frame_buf.clear();
+                            continue;
                         }
+                    };
 
-                        // Reset buffer
-                        frame_buf.clear();
-                        in_frame = false;
-                    } else {
-                        in_frame = true;
+                    // Handle the frame and check if the connection should be terminated
+                    if handle_reception(
+                        frame,
+                        &window,
+                        &condition,
+                        writer_tx.as_ref(),
+                        assembler_tx.as_ref(),
+                        &mut next_info_frame_num,
+                    )
+                    .await
+                    {
+                        return Ok("Connection ended by server");
                     }
-                } else if in_frame {
+
+                    // Reset buffer
+                    frame_buf.clear();
+                } else {
                     // Add byte to frame buffer
                     frame_buf.push(*byte);
                 }
@@ -421,8 +411,9 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
         let mut interval = time::interval(time::Duration::from_secs(Window::FRAME_TIMEOUT));
         loop {
             interval.tick().await;
-            let frame;
+            let frame_bytes;
             let is_connected;
+            let frame_type;
 
             // Lock the window for as short a time as possible
             {
@@ -430,20 +421,23 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
                 is_connected = window.is_connected;
 
                 // Check if the frame is still in the window and get its bytes
-                frame = window
-                    .frames
-                    .iter()
-                    .find(|frame| frame.num == num)
-                    .map(|frame| frame.to_bytes());
+                let frame = match window.frames.iter().find(|frame| frame.num == num) {
+                    Some(frame) => frame,
+                    None => {
+                        warn!("Frame {} was acked", num);
+                        break;
+                    }
+                };
+
+                frame_bytes = frame.to_bytes();
+                frame_type = frame.frame_type;
             }
 
             // Send the frame if it is still in the window
             // If the frame is not in the window, it has been acknowledged and the task can stop
-            if is_connected && frame.is_some() {
+            if is_connected || frame_type == FrameType::ConnectionStart.into() {
                 warn!("Timeout expired, resending frame {}", num);
-                tx.send(frame.unwrap()).await.expect("Failed to send frame");
-            } else {
-                break;
+                tx.send(frame_bytes).await.expect("Failed to send frame");
             }
         }
     });
@@ -507,7 +501,7 @@ pub async fn connection_request(
     // Run a timer to resend the frame if it is not acknowledged
     let tx_clone = tx.clone();
     let window_clone = window.clone();
-    create_frame_timer(window_clone, 0, tx_clone).await;
+    create_frame_timer(window_clone, srej, tx_clone).await;
 
     // Wait for the request to be acknowledged
     {

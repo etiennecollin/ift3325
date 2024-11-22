@@ -35,36 +35,27 @@ pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 
     let mut escape: bool = false;
-    let mut in_frame: bool = false;
     for byte in frame_bytes {
         // Handle the escape flag
-        if escape && in_frame {
-            // Check if the byte is a boundary flag and if so, abort the sequence
-            if *byte == Frame::BOUNDARY_FLAG {
-                return Err(FrameError::AbortSequenceReceived);
+        if escape {
+            match *byte {
+                // Check if the byte is a boundary flag and if so, abort the sequence
+                Frame::BOUNDARY_FLAG => return Err(FrameError::AbortSequenceReceived),
+                _ => {
+                    // Add the byte to the frame and flip the 5th bit
+                    destuffed_frame.push(*byte ^ Frame::REPLACEMENT_POSITION);
+                    escape = false;
+                }
             }
-            // Add the byte to the frame and flip the 5th bit
-            destuffed_frame.push(*byte ^ Frame::REPLACEMENT_POSITION);
-            escape = false;
         } else {
             match *byte {
                 Frame::ESCAPE_FLAG => escape = true,
-                Frame::BOUNDARY_FLAG => {
-                    if !in_frame {
-                        // Start of frame
-                        in_frame = true;
-                        continue;
-                    } else {
-                        // End of frame
-                        return Ok(destuffed_frame);
-                    }
-                }
                 _ => destuffed_frame.push(*byte),
             }
         }
     }
 
-    Err(FrameError::DestuffingError)
+    Ok(destuffed_frame)
 }
 
 #[cfg(test)]

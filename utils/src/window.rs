@@ -30,7 +30,7 @@ impl Window {
     pub const NUMBERING_BITS: usize = 3;
     /// The maximum number a frame can take
     pub const MAX_FRAME_NUM: u8 = 1 << Self::NUMBERING_BITS;
-    /// The maximum time in seconts to wait before a fame is considered lost
+    /// The maximum time in seconds to wait before a fame is considered lost
     pub const FRAME_TIMEOUT: u64 = 3;
 
     const SIZE_GO_BACK_N: usize = (1 << Self::NUMBERING_BITS) - 1;

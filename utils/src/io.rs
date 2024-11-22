@@ -238,6 +238,51 @@ pub async fn handle_reception(
 
             info!("Received connection end frame");
         }
+        FrameType::ConnectionStart => {
+            // Initialize the window
+            let is_window_empty: bool;
+            {
+                let mut window = safe_window.lock().expect("Failed to lock window");
+                window.connected = true;
+                is_window_empty = window.is_empty();
+
+                // If the window is empty, then we are not the ones initiating the connection and
+                // must set the SREJ flag based on the frame number. Else, we should check if the
+                // SREJ flag is consistent with the frame number received.
+                let frame_srej = match frame.num {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid frame number for connection request"),
+                };
+                if is_window_empty {
+                    window.srej = frame_srej;
+                } else {
+                    assert_eq!(frame_srej, window.srej);
+                }
+            }
+
+            // If the window is empty, then we are not the ones initiating the connection
+            // and we should send an acknowledgment. Else, we should pop the connection request
+            // frame from our window as it was acknowledged.
+            //
+            // This works as the connection request is always the first frame to be sent.
+            if is_window_empty {
+                // Send an acknowledgment for the connection request frame
+                let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
+                let ack_frame =
+                    Frame::new(FrameType::ConnectionStart, frame.num, Vec::new()).to_bytes();
+                writer_tx
+                    .send(ack_frame)
+                    .await
+                    .expect("Failed to send acknowledgment frame");
+
+                info!("Received connection request and sent acknowledgment");
+            } else {
+                let mut window = safe_window.lock().expect("Failed to lock window");
+                window.pop_front(condition);
+                info!("Received acknowledgment for connection request frame");
+            }
+        }
         FrameType::Information => {
             // Ignore the frame if the connection is not established
             if !safe_window.lock().expect("Failed to lock window").connected {
@@ -307,51 +352,6 @@ pub async fn handle_reception(
 
             info!("Received frame {}", frame.num,);
             info!("Sent ack until frame {}", *expected_info_num)
-        }
-        FrameType::ConnectionStart => {
-            // Initialize the window
-            let is_window_empty: bool;
-            {
-                let mut window = safe_window.lock().expect("Failed to lock window");
-                window.connected = true;
-                is_window_empty = window.is_empty();
-
-                // If the window is empty, then we are not the ones initiating the connection and
-                // must set the SREJ flag based on the frame number. Else, we should check if the
-                // SREJ flag is consistent with the frame number received.
-                let frame_srej = match frame.num {
-                    0 => false,
-                    1 => true,
-                    _ => panic!("Invalid frame number for connection request"),
-                };
-                if is_window_empty {
-                    window.srej = frame_srej;
-                } else {
-                    assert_eq!(frame_srej, window.srej);
-                }
-            }
-
-            // If the window is empty, then we are not the ones initiating the connection
-            // and we should send an acknowledgment. Else, we should pop the connection request
-            // frame from our window as it was acknowledged.
-            //
-            // This works as the connection request is always the first frame to be sent.
-            if is_window_empty {
-                // Send an acknowledgment for the connection request frame
-                let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
-                let ack_frame =
-                    Frame::new(FrameType::ConnectionStart, frame.num, Vec::new()).to_bytes();
-                writer_tx
-                    .send(ack_frame)
-                    .await
-                    .expect("Failed to send acknowledgment frame");
-
-                info!("Received connection request and sent acknowledgment");
-            } else {
-                let mut window = safe_window.lock().expect("Failed to lock window");
-                window.pop_front(condition);
-                info!("Received acknowledgment for connection request frame");
-            }
         }
         FrameType::P => {
             todo!("What to do with P frames?");

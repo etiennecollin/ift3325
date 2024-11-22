@@ -34,7 +34,7 @@ pub fn reader(
     tokio::spawn(async move {
         let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
         let mut in_frame = false;
-        let mut next_info_frame_num = 0;
+        let mut next_info_frame_num: u8 = 0;
 
         loop {
             // Read from the stream into the buffer
@@ -59,8 +59,10 @@ pub fn reader(
                         let frame = match Frame::from_bytes(&frame_buf) {
                             Ok(frame) => frame,
                             Err(e) => {
-                                error!("Failed to create frame from buffer: {:?}", e);
-                                break;
+                                warn!("Failed to create frame from buffer: {:X?}", e);
+                                frame_buf.clear();
+                                in_frame = false;
+                                continue;
                             }
                         };
 
@@ -80,9 +82,10 @@ pub fn reader(
 
                         // Reset buffer
                         frame_buf.clear();
+                        in_frame = false;
+                    } else {
+                        in_frame = true;
                     }
-
-                    in_frame = !in_frame;
                 } else if in_frame {
                     // Add byte to frame buffer
                     frame_buf.push(*byte);
@@ -378,7 +381,7 @@ pub fn writer(
             // Flush the stream to ensure the data is sent immediately
             match stream.flush().await {
                 Ok(it) => it,
-                Err(_) => return Err("Failet to flush stream"),
+                Err(_) => return Err("Failed to flush stream"),
             };
         }
 
@@ -428,11 +431,6 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
                     .iter()
                     .find(|frame| frame.num == num)
                     .map(|frame| frame.to_bytes());
-
-                warn!(
-                    "Window: {:?}",
-                    window.frames.iter().map(|f| f.num).collect::<Vec<u8>>()
-                );
             }
 
             // Send the frame if it is still in the window

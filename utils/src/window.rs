@@ -32,8 +32,9 @@ impl Window {
     pub const MAX_FRAME_NUM: u8 = 1 << Self::NUMBERING_BITS;
     /// The maximum time in seconds to wait before a fame is considered lost
     pub const FRAME_TIMEOUT: u64 = 3;
-
+    /// The maximum number of frames that can be in the window for the go-back-n protocol
     const SIZE_GO_BACK_N: usize = (1 << Self::NUMBERING_BITS) - 1;
+    /// The maximum number of frames that can be in the window for the selective reject protocol
     const SIZE_SREJ: usize = 1 << (Self::NUMBERING_BITS - 1);
 
     /// Create a new window

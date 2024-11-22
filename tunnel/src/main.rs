@@ -31,7 +31,7 @@ async fn main() {
     // Check if the right number of arguments were provided
     if args.len() != 6 {
         error!(
-            "Usage: {} <port_number> <server_address> <server_port_number> <P(drop)> <P(flip)>",
+            "Usage: {} <in_port> <out_address> <out_port> <prob_frame_drop> <prob_bit_flip>",
             args[0]
         );
         exit(1);

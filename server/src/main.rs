@@ -13,6 +13,7 @@
 //!
 //! Replace `<port_number>` with the desired port number (e.g., 8080).
 
+use env_logger::TimestampPrecision;
 use log::{error, info};
 use std::{
     env,
@@ -46,7 +47,12 @@ const OUTPUT_DIR: &str = "./output";
 #[tokio::main]
 async fn main() {
     // Initialize the logger
-    env_logger::init();
+    env_logger::builder()
+        .format_module_path(false)
+        .format_timestamp(Some(TimestampPrecision::Nanos))
+        .format_level(true)
+        .format_target(true)
+        .init();
 
     // Collect command-line arguments
     let args: Vec<String> = env::args().collect();

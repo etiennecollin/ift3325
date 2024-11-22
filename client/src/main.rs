@@ -14,6 +14,7 @@
 //! Replace `<address>` with the server's IP address (e.g., 127.0.0.1), `<port>` with the desired port number,
 //! and `<file_path>` with the path to the file you want to send.
 
+use env_logger::TimestampPrecision;
 use log::{error, info};
 use std::{
     env,
@@ -41,7 +42,12 @@ use utils::{
 #[tokio::main]
 async fn main() {
     // Initialize the logger
-    env_logger::init();
+    env_logger::builder()
+        .format_module_path(false)
+        .format_timestamp(Some(TimestampPrecision::Nanos))
+        .format_level(true)
+        .format_target(true)
+        .init();
 
     // Collect command-line arguments
     let args: Vec<String> = env::args().collect();

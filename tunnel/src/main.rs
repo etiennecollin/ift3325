@@ -1,3 +1,4 @@
+use env_logger::TimestampPrecision;
 use log::{error, info, warn};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::{
@@ -17,7 +18,12 @@ use utils::{frame::Frame, io::flatten};
 #[tokio::main]
 async fn main() {
     // Initialize the logger
-    env_logger::init();
+    env_logger::builder()
+        .format_module_path(false)
+        .format_timestamp(Some(TimestampPrecision::Nanos))
+        .format_level(true)
+        .format_target(true)
+        .init();
 
     // Collect command-line arguments
     let args: Vec<String> = env::args().collect();
@@ -94,7 +100,7 @@ async fn main() {
     );
     loop {
         match listener.accept().await {
-            Ok((stream, client_addr)) => {
+            Ok((client_stream, client_addr)) => {
                 // Spawn a new task to handle the client
                 info!("New client: {:?}", client_addr);
 
@@ -112,8 +118,13 @@ async fn main() {
 
                 // Handle the client
                 task::spawn(async move {
-                    handle_connection(stream, server_stream, drop_probability, flip_probability)
-                        .await;
+                    handle_connection(
+                        client_stream,
+                        server_stream,
+                        drop_probability,
+                        flip_probability,
+                    )
+                    .await;
                 });
             }
             Err(e) => {
@@ -142,17 +153,20 @@ async fn handle_connection(
 
     let client_handler = handle_client(
         client_read,
-        server_tx.clone(),
+        client_tx.clone(),
         drop_probability,
         flip_probability,
     );
     let server_handler = handle_server(
         server_read,
-        client_tx.clone(),
+        server_tx.clone(),
         drop_probability,
         flip_probability,
     );
 
+    // Drop our own copies of the sender channels
+    // This will allow the writer tasks to
+    // terminate when the sender channels are dropped
     drop(client_tx);
     drop(server_tx);
 
@@ -192,7 +206,6 @@ fn handle_client(
             // =====================================================================
             // Read client stream
             // =====================================================================
-            info!("Reading from client stream");
             let mut from_client = [0; Frame::MAX_SIZE];
             let read_length = match client_read.read(&mut from_client).await {
                 Ok(v) => v,
@@ -226,7 +239,6 @@ fn handle_client(
             // Send the frame to server
             // =====================================================================
             // Send the file contents to the server
-            info!("Writing to server stream");
             server_tx.send(from_client.to_vec()).await.unwrap();
         }
     })
@@ -244,7 +256,6 @@ fn handle_server(
             // Read server stream
             // =====================================================================
             let mut from_server = [0; Frame::MAX_SIZE];
-            info!("Reading from server stream");
             let read_length = match server_read.read(&mut from_server).await {
                 Ok(read_length) => read_length,
                 Err(_) => {

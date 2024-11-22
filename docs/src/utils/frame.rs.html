@@ -409,35 +409,40 @@
 <a href="#409" id="409">409</a>
 <a href="#410" id="410">410</a>
 <a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
     crc::crc_16_ccitt,
 };
 
-<span class="attr">#[derive(Debug)]
-</span><span class="doccomment">/// An error that may occur when working with frames.
+<span class="doccomment">/// An error that may occur when working with frames.
 /// The following errors are possible:
 /// - InvalidFrameType: The frame type is invalid
 /// - InvalidFCS: The FCS does not match the CRC
 /// - InvalidLength: The frame is too short
 /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
 /// - ByteDestuffingError: An error occurred during byte destuffing
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>FrameError {
     InvalidFrameType(u8),
     InvalidFCS(u16),
-    InvalidLength,
+    InvalidLength(usize),
     MissingBoundaryFlag,
     AbortSequenceReceived,
+    DestuffingError,
 }
 
-<span class="attr">#[repr(u8)]
-</span><span class="doccomment">/// The type of a frame.
+<span class="doccomment">/// The type of a frame.
 /// The frame type is encoded as a single byte.
+</span><span class="attr">#[repr(u8)]
 </span><span class="kw">pub enum </span>FrameType {
     <span class="doccomment">/// Contains data to be transmitted
     </span>Information = <span class="string">b'I'</span>,
     <span class="doccomment">/// Indicates that the sender wants to establish a connection
-    </span>ConnexionRequest = <span class="string">b'C'</span>,
+    </span>ConnectionStart = <span class="string">b'C'</span>,
     <span class="doccomment">/// Indicates that the sender is ready to receive more data
     </span>ReceiveReady = <span class="string">b'A'</span>,
     <span class="doccomment">/// Requests immediate retransmission of data
@@ -446,6 +451,8 @@
     </span>ConnexionEnd = <span class="string">b'F'</span>,
     <span class="doccomment">/// Forces the receiver to send a response
     </span>P = <span class="string">b'P'</span>,
+    <span class="doccomment">/// Unknown frame type
+    </span>Unknown = <span class="number">0</span>,
 }
 
 <span class="doccomment">/// Convert a byte to a frame type.
@@ -453,12 +460,12 @@
     <span class="kw">fn </span>from(byte: u8) -&gt; <span class="self">Self </span>{
         <span class="kw">match </span>byte {
             <span class="string">b'I' </span>=&gt; FrameType::Information,
-            <span class="string">b'C' </span>=&gt; FrameType::ConnexionRequest,
+            <span class="string">b'C' </span>=&gt; FrameType::ConnectionStart,
             <span class="string">b'A' </span>=&gt; FrameType::ReceiveReady,
             <span class="string">b'R' </span>=&gt; FrameType::Reject,
             <span class="string">b'F' </span>=&gt; FrameType::ConnexionEnd,
             <span class="string">b'P' </span>=&gt; FrameType::P,
-            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"Invalid frame type: {}"</span>, byte),
+            <span class="kw">_ </span>=&gt; FrameType::Unknown,
         }
     }
 }
@@ -505,9 +512,11 @@
     <span class="doccomment">/// Replace an escaped byte by computing the XOR between the byte and this byte
     </span><span class="kw">pub const </span>REPLACEMENT_POSITION: u8 = <span class="number">0x20</span>;
     <span class="doccomment">/// The maximum size of the data field in bytes
-    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">64 </span>* <span class="number">1024</span>; <span class="comment">// 64kB
+    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">64</span>; <span class="comment">// 64kB
+                                         // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     </span><span class="doccomment">/// The size of a frame in bytes
+    ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
     /// - Content
@@ -537,6 +546,7 @@
     }
 
     <span class="doccomment">/// Initialize the content fields of the frame.
+    ///
     /// The following fields are initialized:
     /// - The frame content
     /// - The bit-stuffed version of the frame content
@@ -572,6 +582,7 @@
     }
 
     <span class="doccomment">/// Convert the frame to a vector of bytes encoded with byte stuffing.
+    ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
     /// - Content
@@ -590,6 +601,7 @@
     }
 
     <span class="doccomment">/// Create a new frame from the given bytes.
+    ///
     /// The frame is decoded as follows:
     /// - 1 byte: boundary flag
     /// - Content
@@ -606,32 +618,21 @@
     /// - InvalidFCS: The FCS does not match the CRC
     /// - InvalidLength: The frame is too short
     /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
+    ///
+    /// If there is a checksum error, the number of the frame is wrapped in the error.
     </span><span class="kw">pub fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Frame, FrameError&gt; {
         <span class="comment">// The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         </span><span class="kw">if </span>bytes.len() &lt; <span class="number">6 </span>{
-            <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidLength);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidLength(bytes.len()));
         }
 
         <span class="comment">// The frame should start with a boundary flag
-        </span><span class="kw">if </span>bytes[<span class="number">0</span>] != Frame::BOUNDARY_FLAG {
+        </span><span class="kw">if </span>bytes[<span class="number">0</span>] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - <span class="number">1</span>] != Frame::BOUNDARY_FLAG {
             <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::MissingBoundaryFlag);
         }
 
-        <span class="comment">// Find position of the last boundary flag
-        </span><span class="kw">let </span>last_flag_pos = <span class="kw">match </span>bytes[<span class="number">1</span>..]
-            .iter()
-            .rev()
-            .position(|<span class="kw-2">&amp;</span>byte| byte == Frame::BOUNDARY_FLAG)
-        {
-            <span class="prelude-val">Some</span>(i) =&gt; {
-                <span class="comment">// Add one since we iter on bytes[1..]
-                </span>i + <span class="number">1
-            </span>}
-            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::MissingBoundaryFlag),
-        };
-
         <span class="comment">// Destuff the frame content
-        </span><span class="kw">let </span>content = byte_destuffing(<span class="kw-2">&amp;</span>bytes[..last_flag_pos + <span class="number">1</span>])<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>content = byte_destuffing(bytes)<span class="question-mark">?</span>;
 
         <span class="comment">// Extract the frame information
         </span><span class="kw">let </span>frame_type = content[<span class="number">0</span>];
@@ -650,11 +651,16 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFCS(fcs));
         }
 
-        <span class="comment">// Create the frame content
-        </span><span class="kw">let </span><span class="kw-2">mut </span>frame = Frame::new(FrameType::from(frame_type), num, data);
+        <span class="comment">// Create the frame contenta
+        </span><span class="kw">let </span>frame_type = <span class="kw">match </span>FrameType::from(frame_type) {
+            FrameType::Unknown =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFrameType(frame_type)),
+            frame_type =&gt; frame_type,
+        };
+
+        <span class="kw">let </span><span class="kw-2">mut </span>frame = Frame::new(frame_type, num, data);
         frame.fcs = <span class="prelude-val">Some</span>(fcs);
         frame.content = <span class="prelude-val">Some</span>(content);
-        frame.content_stuffed = <span class="prelude-val">Some</span>(bytes[..last_flag_pos + <span class="number">1</span>].to_vec());
+        frame.content_stuffed = <span class="prelude-val">Some</span>(bytes.to_vec());
 
         <span class="prelude-val">Ok</span>(frame)
     }
@@ -668,7 +674,7 @@
     </span><span class="kw">fn </span>frame_abort_error_test() {
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
             <span class="number">0x7E</span>,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
@@ -692,7 +698,7 @@
     <span class="attr">#[test]
     </span><span class="kw">fn </span>frame_flags_error_test() {
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
@@ -705,7 +711,7 @@
 
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
             <span class="number">0x7E</span>,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
@@ -727,7 +733,7 @@
     </span><span class="kw">fn </span>frame_crc_error_test() {
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
             <span class="number">0x7E</span>,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
@@ -741,11 +747,11 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>frame_get_bytes_structure_test() {
-        <span class="kw">let </span>frame = Frame::new(FrameType::ConnexionRequest, <span class="number">0x02</span>, <span class="macro">vec!</span>[<span class="number">0x03</span>, <span class="number">0x04</span>]);
+        <span class="kw">let </span>frame = Frame::new(FrameType::ConnectionStart, <span class="number">0x02</span>, <span class="macro">vec!</span>[<span class="number">0x03</span>, <span class="number">0x04</span>]);
 
         <span class="comment">// Set the expected values
         </span><span class="kw">let </span>expected_fcs = <span class="number">0x8EF7u16</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>expected_content = <span class="macro">vec!</span>[FrameType::ConnexionRequest.into(), <span class="number">0x02</span>, <span class="number">0x03</span>, <span class="number">0x04</span>];
+        <span class="kw">let </span><span class="kw-2">mut </span>expected_content = <span class="macro">vec!</span>[FrameType::ConnectionStart.into(), <span class="number">0x02</span>, <span class="number">0x03</span>, <span class="number">0x04</span>];
         expected_content.extend_from_slice(<span class="kw-2">&amp;</span>expected_fcs.to_be_bytes());
         <span class="kw">let </span>expected_stuffed_content = byte_stuffing(<span class="kw-2">&amp;</span>expected_content);
 
@@ -759,7 +765,7 @@
     </span><span class="kw">fn </span>bytes_to_frame_conversion_test() {
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
             <span class="number">0x7E</span>,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
@@ -782,14 +788,16 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>frame_empty_data_test() {
-        <span class="kw">let </span>frame = Frame::new(FrameType::ConnexionRequest, <span class="number">0x02</span>, <span class="macro">vec!</span>[]);
+        <span class="kw">let </span>frame = Frame::new(FrameType::ConnectionStart, <span class="number">0x02</span>, <span class="macro">vec!</span>[]);
         <span class="kw">let </span>bytes = frame.to_bytes();
+
+        <span class="macro">println!</span>(<span class="string">"Bytes RAW: {:X?}"</span>, bytes);
 
         <span class="comment">// Set the expected values
         </span><span class="kw">let </span>expected_fcs = <span class="number">0x78DDu16</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>expected_bytes = <span class="macro">vec!</span>[
             Frame::BOUNDARY_FLAG,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             <span class="number">0x02</span>,
         ];
         expected_bytes.extend_from_slice(<span class="kw-2">&amp;</span>expected_fcs.to_be_bytes());

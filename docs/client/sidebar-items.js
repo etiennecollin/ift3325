@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["handle_frame","main","receive","send"],"type":["SafeCond","SafeWindow"]};
+window.SIDEBAR_ITEMS = {"fn":["main","send_file","setup_connection"]};

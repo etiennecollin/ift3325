@@ -14,7 +14,7 @@ use crate::{
 pub enum FrameError {
     InvalidFrameType(u8),
     InvalidFCS(u16),
-    InvalidLength,
+    InvalidLength(usize),
     MissingBoundaryFlag,
     AbortSequenceReceived,
     DestuffingError,
@@ -208,7 +208,7 @@ impl Frame {
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 6 {
-            return Err(FrameError::InvalidLength);
+            return Err(FrameError::InvalidLength(bytes.len()));
         }
 
         // The frame should start with a boundary flag

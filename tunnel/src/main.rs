@@ -129,7 +129,6 @@ async fn handle_client(
         // Read client stream
         // =====================================================================
         let mut from_client = [0; Frame::MAX_SIZE];
-        info!("Reading from client stream");
         let read_length = match client_stream.read(&mut from_client).await {
             Ok(read_length) => read_length,
             Err(e) => {
@@ -167,7 +166,6 @@ async fn handle_client(
         // =====================================================================
 
         // Send the file contents to the server
-        info!("Writing to server stream");
         match server_stream.write_all(&from_client).await {
             Ok(it) => it,
             Err(_) => {
@@ -188,7 +186,6 @@ async fn handle_client(
         // =====================================================================
         // Read server stream
         // =====================================================================
-        info!("Reading from server stream");
         let mut from_server = [0; Frame::MAX_SIZE];
         let read_length = match server_stream.read(&mut from_server).await {
             Ok(read_length) => read_length,
@@ -226,7 +223,6 @@ async fn handle_client(
         // Send the frame to client
         // =====================================================================
 
-        info!("Writing to client stream");
         // Send the file contents to the server
         match client_stream.write_all(&from_server).await {
             Ok(it) => it,

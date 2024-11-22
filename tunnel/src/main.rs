@@ -2,10 +2,14 @@ use log::{error, info, warn};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    task,
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    },
+    sync::mpsc,
+    task::{self, JoinHandle},
 };
-use utils::frame::Frame;
+use utils::{frame::Frame, io::flatten};
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
@@ -108,7 +112,8 @@ async fn main() {
 
                 // Handle the client
                 task::spawn(async move {
-                    handle_client(stream, server_stream, drop_probability, flip_probability).await;
+                    handle_connection(stream, server_stream, drop_probability, flip_probability)
+                        .await;
                 });
             }
             Err(e) => {
@@ -118,134 +123,160 @@ async fn main() {
     }
 }
 
-async fn handle_client(
-    mut client_stream: TcpStream,
-    mut server_stream: TcpStream,
+async fn handle_connection(
+    client_stream: TcpStream,
+    server_stream: TcpStream,
     drop_probability: f32,
     flip_probability: f32,
 ) {
-    loop {
-        // =====================================================================
-        // Read client stream
-        // =====================================================================
-        let mut from_client = [0; Frame::MAX_SIZE];
-        let read_length = match client_stream.read(&mut from_client).await {
-            Ok(read_length) => read_length,
-            Err(e) => {
-                error!("Failed to read from client stream: {}", e);
-                break;
-            }
-        };
+    let (client_tx, client_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (server_tx, server_rx) = mpsc::channel::<Vec<u8>>(100);
 
-        if read_length == 0 {
-            warn!("Client closed the connection");
-            break;
-        }
+    // Split streams
+    let (client_read, client_write) = client_stream.into_split();
+    let (server_read, server_write) = server_stream.into_split();
 
-        // =====================================================================
-        // Perturb the frame
-        // =====================================================================
+    // Generate writer tasks
+    let client_writer = writer(client_write, server_rx);
+    let server_writer = writer(server_write, client_rx);
 
-        // Drop the frame with a probability
-        if rand::random::<f32>() < drop_probability {
-            // Drop the frame
-            warn!("Dropping client frame");
-            continue;
-        }
+    let client_handler = handle_client(
+        client_read,
+        server_tx.clone(),
+        drop_probability,
+        flip_probability,
+    );
+    let server_handler = handle_server(
+        server_read,
+        client_tx.clone(),
+        drop_probability,
+        flip_probability,
+    );
 
-        // Bit flip the frame with a probability
-        if rand::random::<f32>() < flip_probability {
-            // Flip a random bit
-            warn!("Flipping bit in client frame");
-            let bit = rand::random::<usize>() % read_length * 8;
-            from_client[bit / 8] ^= 1 << (bit % 8);
-        }
+    drop(client_tx);
+    drop(server_tx);
 
-        // =====================================================================
-        // Send the frame to server
-        // =====================================================================
-
-        // Send the file contents to the server
-        match server_stream.write_all(&from_client).await {
-            Ok(it) => it,
-            Err(_) => {
-                error!("Failed to write to server stream");
-                break;
-            }
-        };
-
-        // Flush the stream to ensure the data is sent immediately
-        match server_stream.flush().await {
-            Ok(it) => it,
-            Err(_) => {
-                error!("Failed to flush server stream");
-                break;
-            }
-        };
-
-        // =====================================================================
-        // Read server stream
-        // =====================================================================
-        let mut from_server = [0; Frame::MAX_SIZE];
-        let read_length = match server_stream.read(&mut from_server).await {
-            Ok(read_length) => read_length,
-            Err(e) => {
-                error!("Failed to read from server stream: {}", e);
-                break;
-            }
-        };
-
-        if read_length == 0 {
-            warn!("Server closed the connection");
-            break;
-        }
-
-        // =====================================================================
-        // Perturb the frame
-        // =====================================================================
-
-        // Drop the frame with a probability
-        if rand::random::<f32>() < drop_probability {
-            // Drop the frame
-            warn!("Dropping server frame");
-            continue;
-        }
-
-        // Bit flip the frame with a probability
-        if rand::random::<f32>() < flip_probability {
-            // Flip a random bit
-            warn!("Flipping bit in server frame");
-            let bit = rand::random::<usize>() % read_length * 8;
-            from_server[bit / 8] ^= 1 << (bit % 8);
-        }
-
-        // =====================================================================
-        // Send the frame to client
-        // =====================================================================
-
-        // Send the file contents to the server
-        match client_stream.write_all(&from_server).await {
-            Ok(it) => it,
-            Err(_) => {
-                error!("Failed to write to client stream");
-                break;
-            }
-        };
-
-        // Flush the stream to ensure the data is sent immediately
-        match client_stream.flush().await {
-            Ok(it) => it,
-            Err(_) => {
-                error!("Failed to flush client stream");
-                break;
-            }
-        };
-    }
-
-    if server_stream.shutdown().await.is_err() {
-        error!("Failed to shutdown server stream");
+    match tokio::try_join!(
+        flatten(client_writer),
+        flatten(server_writer),
+        flatten(client_handler),
+        flatten(server_handler),
+    ) {
+        Ok(_) => info!("Connection closed"),
+        Err(e) => error!("Error: {:?}", e),
     };
-    if client_stream.shutdown().await.is_err() {
-        error!("Failed to shutdown client stream");
-    };
+}
+
+fn writer(
+    mut stream: OwnedWriteHalf,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+) -> JoinHandle<Result<(), &'static str>> {
+    tokio::spawn(async move {
+        while let Some(frame) = rx.recv().await {
+            stream.write_all(&frame).await.unwrap();
+            stream.flush().await.unwrap();
+        }
+
+        Ok(())
+    })
+}
+
+fn handle_client(
+    mut client_read: OwnedReadHalf,
+    server_tx: mpsc::Sender<Vec<u8>>,
+    drop_probability: f32,
+    flip_probability: f32,
+) -> JoinHandle<Result<(), &'static str>> {
+    tokio::spawn(async move {
+        loop {
+            // =====================================================================
+            // Read client stream
+            // =====================================================================
+            info!("Reading from client stream");
+            let mut from_client = [0; Frame::MAX_SIZE];
+            let read_length = match client_read.read(&mut from_client).await {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err("Failed to read from client stream");
+                }
+            };
+
+            if read_length == 0 {
+                warn!("Client closed the connection");
+                return Ok(());
+            }
+
+            // =====================================================================
+            // Perturb the frame
+            // =====================================================================
+            // Drop the frame with a probability
+            if rand::random::<f32>() < drop_probability {
+                warn!("Dropping client frame");
+                continue;
+            }
+
+            // Bit flip the frame with a probability
+            if rand::random::<f32>() < flip_probability {
+                warn!("Flipping bit in client frame");
+                let bit = rand::random::<usize>() % read_length * 8;
+                from_client[bit / 8] ^= 1 << (bit % 8);
+            }
+
+            // =====================================================================
+            // Send the frame to server
+            // =====================================================================
+            // Send the file contents to the server
+            info!("Writing to server stream");
+            server_tx.send(from_client.to_vec()).await.unwrap();
+        }
+    })
+}
+
+fn handle_server(
+    mut server_read: OwnedReadHalf,
+    client_tx: mpsc::Sender<Vec<u8>>,
+    drop_probability: f32,
+    flip_probability: f32,
+) -> JoinHandle<Result<(), &'static str>> {
+    tokio::spawn(async move {
+        loop {
+            // =====================================================================
+            // Read server stream
+            // =====================================================================
+            let mut from_server = [0; Frame::MAX_SIZE];
+            info!("Reading from server stream");
+            let read_length = match server_read.read(&mut from_server).await {
+                Ok(read_length) => read_length,
+                Err(_) => {
+                    return Err("Failed to read from server stream");
+                }
+            };
+
+            if read_length == 0 {
+                warn!("Server closed the connection");
+                return Ok(());
+            }
+
+            // =====================================================================
+            // Perturb the frame
+            // =====================================================================
+            // Drop the frame with a probability
+            if rand::random::<f32>() < drop_probability {
+                warn!("Dropping server frame");
+                continue;
+            }
+
+            // Bit flip the frame with a probability
+            if rand::random::<f32>() < flip_probability {
+                warn!("Flipping bit in server frame");
+                let bit = rand::random::<usize>() % read_length * 8;
+                from_server[bit / 8] ^= 1 << (bit % 8);
+            }
+
+            // =====================================================================
+            // Send the frame to client
+            // =====================================================================
+            client_tx.send(from_server.to_vec()).await.unwrap();
+        }
+    })
 }

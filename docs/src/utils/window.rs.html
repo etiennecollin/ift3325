@@ -80,8 +80,67 @@
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
-<span class="kw">use </span>std::collections::VecDeque;
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>log::debug;
+
+<span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
+<span class="kw">use </span>std::{
+    collections::VecDeque,
+    sync::{Arc, Condvar, Mutex},
+};
+
+<span class="kw">pub type </span>SafeWindow = Arc&lt;Mutex&lt;Window&gt;&gt;;
+<span class="kw">pub type </span>SafeCond = Arc&lt;Condvar&gt;;
 
 <span class="comment">// Define the error type for the window
 </span><span class="attr">#[derive(Debug)]
@@ -94,29 +153,48 @@
 /// It implements a deque with a maximum size of `WINDOW_SIZE`.
 </span><span class="kw">pub struct </span>Window {
     <span class="kw">pub </span>frames: VecDeque&lt;Frame&gt;,
-    <span class="kw">pub </span>resend: bool,
+    <span class="kw">pub </span>resend_all: bool,
+    <span class="kw">pub </span>is_connected: bool,
+    <span class="kw">pub </span>srej: bool,
+    <span class="kw">pub </span>waiting_disconnect: bool,
 }
 
 <span class="kw">impl </span>Window {
     <span class="doccomment">/// Number of bits used for numbering frames
     </span><span class="kw">pub const </span>NUMBERING_BITS: usize = <span class="number">3</span>;
-    <span class="doccomment">/// The maximum number of frames that can be in the window for a Go-Back-N protocol
-    </span><span class="kw">pub const </span>SIZE: usize = (<span class="number">1 </span>&lt;&lt; <span class="self">Self</span>::NUMBERING_BITS) - <span class="number">1</span>;
-    <span class="doccomment">/// The maximum time to wait before a fame is considered lost
+    <span class="doccomment">/// The maximum number a frame can take
+    </span><span class="kw">pub const </span>MAX_FRAME_NUM: u8 = <span class="number">1 </span>&lt;&lt; <span class="self">Self</span>::NUMBERING_BITS;
+    <span class="doccomment">/// The maximum time in seconds to wait before a fame is considered lost
     </span><span class="kw">pub const </span>FRAME_TIMEOUT: u64 = <span class="number">3</span>;
+    <span class="doccomment">/// The maximum number of frames that can be in the window for the go-back-n protocol
+    </span><span class="kw">const </span>SIZE_GO_BACK_N: usize = (<span class="number">1 </span>&lt;&lt; <span class="self">Self</span>::NUMBERING_BITS) - <span class="number">1</span>;
+    <span class="doccomment">/// The maximum number of frames that can be in the window for the selective reject protocol
+    </span><span class="kw">const </span>SIZE_SREJ: usize = <span class="number">1 </span>&lt;&lt; (<span class="self">Self</span>::NUMBERING_BITS - <span class="number">1</span>);
 
     <span class="doccomment">/// Create a new window
     /// The window is initially empty and has a capacity of `WINDOW_SIZE`
     </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            frames: VecDeque::with_capacity(<span class="self">Self</span>::SIZE),
-            resend: <span class="bool-val">false</span>,
+            frames: VecDeque::with_capacity(<span class="self">Self</span>::SIZE_GO_BACK_N),
+            resend_all: <span class="bool-val">false</span>,
+            is_connected: <span class="bool-val">false</span>,
+            srej: <span class="bool-val">false</span>,
+            waiting_disconnect: <span class="bool-val">false</span>,
+        }
+    }
+
+    <span class="doccomment">/// Get the maximum number of frames that can be in the window
+    </span><span class="kw">pub fn </span>get_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="kw">if </span><span class="self">self</span>.srej {
+            <span class="self">Self</span>::SIZE_SREJ
+        } <span class="kw">else </span>{
+            <span class="self">Self</span>::SIZE_GO_BACK_N
         }
     }
 
     <span class="doccomment">/// Push a frame to the back of the window
     </span><span class="kw">pub fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), WindowError&gt; {
-        <span class="kw">if </span><span class="self">self</span>.frames.len() == <span class="self">Self</span>::SIZE {
+        <span class="kw">if </span><span class="self">self</span>.frames.len() == <span class="self">self</span>.get_size() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(WindowError::Full);
         } <span class="kw">else </span>{
             <span class="self">self</span>.frames.push_back(frame);
@@ -125,9 +203,26 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="doccomment">/// Pop a frame from the front of the window and return it
+    ///
+    /// Returns `None` if the window is empty
+    </span><span class="kw">pub fn </span>pop_front(<span class="kw-2">&amp;mut </span><span class="self">self</span>, condition: <span class="kw-2">&amp;</span>SafeCond) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
+        <span class="kw">let </span>popped = <span class="self">self</span>.frames.pop_front();
+
+        <span class="comment">// Notify the send task that space was created in the window
+        </span>condition.notify_one();
+
+        popped
+    }
+
     <span class="doccomment">/// Check if the window is full
-    </span><span class="kw">pub fn </span>isfull(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.frames.len() == <span class="self">Self</span>::SIZE
+    </span><span class="kw">pub fn </span>is_full(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.frames.len() == <span class="self">self</span>.get_size()
+    }
+
+    <span class="doccomment">/// Check if the window contains a frame with the given number
+    </span><span class="kw">pub fn </span>contains(<span class="kw-2">&amp;</span><span class="self">self</span>, num: u8) -&gt; bool {
+        <span class="self">self</span>.frames.iter().any(|frame| frame.num == num)
     }
 
     <span class="doccomment">/// Check if the window is empty
@@ -136,20 +231,27 @@
     }
 
     <span class="doccomment">/// Pop frames from the front of the window until the frame with the given number is reached
-    </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8) -&gt; usize {
+    </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, inclusive: bool, condition: <span class="kw-2">&amp;</span>SafeCond) -&gt; usize {
         <span class="kw">let </span>initial_len = <span class="self">self</span>.frames.len();
 
         <span class="comment">// Get the index of "limit" frame in the window
-        </span><span class="kw">let </span>i = <span class="self">self
-            </span>.frames
-            .iter()
-            .enumerate()
-            .find(|(<span class="kw">_</span>, frame)| frame.num == num)
-            .expect(<span class="string">"Frame not found in window, this should never happen"</span>)
-            .<span class="number">0</span>;
+        </span><span class="kw">let </span>i = <span class="kw">match </span><span class="self">self</span>.frames.iter().position(|frame| frame.num == num) {
+            <span class="prelude-val">Some</span>(i) =&gt; i,
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">debug!</span>(<span class="string">"Frame not found in window, this means it was already acknowledged"</span>);
+                <span class="kw">return </span><span class="number">0</span>;
+            }
+        };
 
         <span class="comment">// Pop the frames that were acknowledged
-        </span><span class="self">self</span>.frames.drain(..i + <span class="number">1</span>);
+        </span><span class="kw">if </span>inclusive {
+            <span class="self">self</span>.frames.drain(..i + <span class="number">1</span>);
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.frames.drain(..i);
+        }
+
+        <span class="comment">// Notify the send task that space was created in the window
+        </span>condition.notify_one();
 
         <span class="kw">let </span>final_len = <span class="self">self</span>.frames.len();
 

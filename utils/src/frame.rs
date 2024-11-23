@@ -14,7 +14,7 @@ use crate::{
 pub enum FrameError {
     InvalidFrameType(u8),
     InvalidFCS(u16),
-    InvalidLength,
+    InvalidLength(usize),
     MissingBoundaryFlag,
     AbortSequenceReceived,
     DestuffingError,
@@ -27,7 +27,7 @@ pub enum FrameType {
     /// Contains data to be transmitted
     Information = b'I',
     /// Indicates that the sender wants to establish a connection
-    ConnexionRequest = b'C',
+    ConnectionStart = b'C',
     /// Indicates that the sender is ready to receive more data
     ReceiveReady = b'A',
     /// Requests immediate retransmission of data
@@ -45,7 +45,7 @@ impl From<u8> for FrameType {
     fn from(byte: u8) -> Self {
         match byte {
             b'I' => FrameType::Information,
-            b'C' => FrameType::ConnexionRequest,
+            b'C' => FrameType::ConnectionStart,
             b'A' => FrameType::ReceiveReady,
             b'R' => FrameType::Reject,
             b'F' => FrameType::ConnexionEnd,
@@ -97,7 +97,8 @@ impl Frame {
     /// Replace an escaped byte by computing the XOR between the byte and this byte
     pub const REPLACEMENT_POSITION: u8 = 0x20;
     /// The maximum size of the data field in bytes
-    pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
+    pub const MAX_SIZE_DATA: usize = 64; // 64kB
+                                         // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     /// The size of a frame in bytes
     ///
@@ -206,14 +207,14 @@ impl Frame {
     /// If there is a checksum error, the number of the frame is wrapped in the error.
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
-        if bytes.len() < 6 {
-            return Err(FrameError::InvalidLength);
+        if bytes.len() < 4 {
+            return Err(FrameError::InvalidLength(bytes.len()));
         }
 
         // The frame should start with a boundary flag
-        if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
-            return Err(FrameError::MissingBoundaryFlag);
-        }
+        // if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
+        //     return Err(FrameError::MissingBoundaryFlag);
+        // }
 
         // Destuff the frame content
         let content = byte_destuffing(bytes)?;
@@ -258,7 +259,7 @@ mod tests {
     fn frame_abort_error_test() {
         let bytes: &[u8] = &[
             0x7E,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
             0x03,
             0x04,
@@ -282,7 +283,7 @@ mod tests {
     #[test]
     fn frame_flags_error_test() {
         let bytes: &[u8] = &[
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
             0x03,
             0x04,
@@ -295,7 +296,7 @@ mod tests {
 
         let bytes: &[u8] = &[
             0x7E,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
             0x03,
             0x04,
@@ -317,7 +318,7 @@ mod tests {
     fn frame_crc_error_test() {
         let bytes: &[u8] = &[
             0x7E,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
             0x03,
             0x04,
@@ -331,11 +332,11 @@ mod tests {
 
     #[test]
     fn frame_get_bytes_structure_test() {
-        let frame = Frame::new(FrameType::ConnexionRequest, 0x02, vec![0x03, 0x04]);
+        let frame = Frame::new(FrameType::ConnectionStart, 0x02, vec![0x03, 0x04]);
 
         // Set the expected values
         let expected_fcs = 0x8EF7u16;
-        let mut expected_content = vec![FrameType::ConnexionRequest.into(), 0x02, 0x03, 0x04];
+        let mut expected_content = vec![FrameType::ConnectionStart.into(), 0x02, 0x03, 0x04];
         expected_content.extend_from_slice(&expected_fcs.to_be_bytes());
         let expected_stuffed_content = byte_stuffing(&expected_content);
 
@@ -349,7 +350,7 @@ mod tests {
     fn bytes_to_frame_conversion_test() {
         let bytes: &[u8] = &[
             0x7E,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
             0x03,
             0x04,
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn frame_empty_data_test() {
-        let frame = Frame::new(FrameType::ConnexionRequest, 0x02, vec![]);
+        let frame = Frame::new(FrameType::ConnectionStart, 0x02, vec![]);
         let bytes = frame.to_bytes();
 
         println!("Bytes RAW: {:X?}", bytes);
@@ -381,7 +382,7 @@ mod tests {
         let expected_fcs = 0x78DDu16;
         let mut expected_bytes = vec![
             Frame::BOUNDARY_FLAG,
-            FrameType::ConnexionRequest.into(),
+            FrameType::ConnectionStart.into(),
             0x02,
         ];
         expected_bytes.extend_from_slice(&expected_fcs.to_be_bytes());

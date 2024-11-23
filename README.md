@@ -17,6 +17,17 @@ Run the client:
 > [!NOTE]
 > If the file sent only contains the string `shutdown`, the server will shutdown.
 
+Run the tunnel:
+
+```bash
+./tunnel <in_port> <out_address> <out_port> <prob_frame_drop> <prob_bit_flip>
+```
+
+> [!NOTE]
+> The tunnel allows the simulation of a noisy environment where frames
+> might be dropped or suffer bit flips. The probabilities in the arguments are
+> values in the range \[0, 1\].
+
 ## Debugging vs. Release
 
 Use the `--profile dev` flag for a debug build, and the `--release` flag for a release build:
@@ -32,3 +43,4 @@ cargo run --release -p <target> <args>
 
 - `server`
 - `client`
+- `tunnel`

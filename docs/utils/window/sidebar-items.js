@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["WindowError"],"struct":["Window"]};
+window.SIDEBAR_ITEMS = {"enum":["WindowError"],"struct":["Window"],"type":["SafeCond","SafeWindow"]};

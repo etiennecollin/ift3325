@@ -14,6 +14,7 @@
 //! Replace `<address>` with the server's IP address (e.g., 127.0.0.1), `<port>` with the desired port number,
 //! and `<file_path>` with the path to the file you want to send.
 
+use env_logger::TimestampPrecision;
 use log::{error, info};
 use std::{
     env,
@@ -26,7 +27,7 @@ use std::{
 use tokio::{net::TcpStream, sync::mpsc};
 use utils::{
     frame::{Frame, FrameType},
-    io::{create_frame_timer, flatten, reader, writer},
+    io::{connection_request, create_frame_timer, flatten, reader, writer},
     window::{SafeCond, SafeWindow, Window},
 };
 
@@ -36,13 +37,17 @@ use utils::{
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
 ///
 /// # Panics
-///
 /// This function will exit the process with an error message if the arguments are incorrect,
 /// if the port number is invalid, or if the address format is invalid.
 #[tokio::main]
 async fn main() {
     // Initialize the logger
-    env_logger::init();
+    env_logger::builder()
+        .format_module_path(false)
+        .format_timestamp(Some(TimestampPrecision::Nanos))
+        .format_level(true)
+        .format_target(true)
+        .init();
 
     // Collect command-line arguments
     let args: Vec<String> = env::args().collect();
@@ -101,6 +106,8 @@ async fn main() {
     };
 
     setup_connection(stream, srej, file_path).await;
+
+    exit(0);
 }
 
 /// Sets up the connection with the server.
@@ -136,37 +143,9 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let writer = writer(write, rx);
 
     // =========================================================================
-    // Send connection request frame
+    // Send connection start request frame
     // =========================================================================
-    let request_frame = Frame::new(FrameType::ConnexionRequest, srej, Vec::new());
-    let request_frame_bytes = request_frame.to_bytes();
-    {
-        let mut window = window.lock().expect("Failed to lock window");
-        window.srej = srej == 1;
-        window
-            .push(request_frame)
-            .expect("Failed to push frame to window");
-    }
-    tx.send(request_frame_bytes)
-        .await
-        .expect("Failed to send frame to writer task");
-    info!("Sent connection request frame");
-
-    // Run a timer to resend the frame if it is not acknowledged
-    let tx_clone = tx.clone();
-    let window_clone = window.clone();
-    create_frame_timer(window_clone, 0, tx_clone).await;
-
-    // Wait for the request to be acknowledged
-    {
-        let mut window = window.lock().expect("Failed to lock window");
-        while !window.is_empty() {
-            window = condition
-                .wait(window)
-                .expect("Failed to wait for condition");
-        }
-        window.connected = true;
-    }
+    connection_request(&window, true, Some(srej), tx.clone(), &condition).await;
 
     // =========================================================================
     // Send the file to the server
@@ -200,13 +179,12 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// established TCP connection.
 ///
 /// # Arguments
-///
-/// * `addr` - The socket address of the server to connect to.
-/// * `window` - The window to manage the frames.
+/// * `tx` - The sender channel to send the frame to the writer task.
+/// * `safe_window` - The window to manage the frames.
+/// * `condition` - The condition to signal tasks that space is available in the window.
 /// * `file_path` - The path to the file to be sent.
 ///
 /// # Panics
-///
 /// This function will exit the process with an error message if any of the following fails:
 /// - Opening the file
 /// - Reading the file contents
@@ -214,7 +192,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 async fn send_file(
     tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
-    pop_condition: SafeCond,
+    condition: SafeCond,
     file_path: String,
 ) -> Result<&'static str, &'static str> {
     // Open the file
@@ -247,7 +225,7 @@ async fn send_file(
             let mut window = safe_window.lock().expect("Failed to lock window");
 
             // Get the frame number based on the chunk index and the window size
-            num = (i % window.get_size()) as u8;
+            num = (i % Window::MAX_FRAME_NUM as usize) as u8;
 
             // Create a new frame with the chunk data
             let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
@@ -255,7 +233,7 @@ async fn send_file(
 
             // Wait for the window to have space
             while window.is_full() {
-                window = pop_condition
+                window = condition
                     .wait(window)
                     .expect("Failed to wait for condition");
             }
@@ -270,6 +248,8 @@ async fn send_file(
             .await
             .expect("Failed to send frame to writer task");
 
+        info!("Sent frame {}", num);
+
         // Run a timer to resend the frame if it is not acknowledged
         let tx_clone = tx.clone();
         let safe_window_clone = safe_window.clone();
@@ -281,17 +261,15 @@ async fn send_file(
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
         while !window.is_empty() {
-            window = pop_condition
+            window = condition
                 .wait(window)
                 .expect("Failed to wait for condition");
         }
     }
+    info!("Window is empty, all data sent");
 
     // Send disconnect frame
-    let disconnection_frame = Frame::new(FrameType::ConnexionEnd, 0, Vec::new()).to_bytes();
-    tx.send(disconnection_frame)
-        .await
-        .expect("Failed to send disconnection frame to writer task");
+    connection_request(&safe_window, false, None, tx, &condition).await;
     Ok("Connection ended by client")
 }
 

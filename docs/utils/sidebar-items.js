@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["byte_stuffing","crc","frame","window"]};
+window.SIDEBAR_ITEMS = {"mod":["byte_stuffing","crc","frame","io","window"]};

@@ -1,0 +1,78 @@
+classDiagram
+  
+    class Client {
+      - handle_server(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'static str>
+      - assembler(assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) -> Result<&'static str, &'static str>
+    }
+
+    class Server {
+      - handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'static str>
+      - assembler(assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) -> Result<&'static str, &'static str>
+    }
+
+    <<enum>> FrameType {
+        Information : u8
+        ConnexionRequest : u8
+        ReceiveReady : u8
+        Reject : u8
+        ConnexionEnd : u8
+        P : u8
+        Unknown : u8
+    }
+
+    <<enum>> FrameError {
+        InvalidFrameType(u8)
+        InvalidFCS(u16)
+        InvalidLength
+        MissingBoundaryFlag
+        AbortSequenceReceived
+        DestuffingError
+        InvalidFrame
+    }
+
+    <<struct>> Frame { 
+        + frame_type: u8
+        + num: u8
+        + data: Vec<u8>
+        + fcs: Option<u16>
+        + content: Option<Vec<u8>>
+        + content_stuffed: Option<Vec<u8>>
+
+        + new(frame_type: u8, num: u8, data: Vec<u8>) -> Frame
+        + generate_content(&self) 
+        + to_bytes(&self) -> Vec<u8>
+        + from_bytes(bytes: &[u8]) -> Result<Frame, FrameError>
+    }
+
+    class Tunnel {
+        + transmit(data: &[u8]): Result<(), Error>
+        + receive(): Result<Vec<u8>, Error>
+    }
+
+    class ByteStuffing {
+        + apply(data: &[u8]): Vec<u8>
+        + remove(data: &[u8]): Result<Vec<u8>, Error>
+    }
+
+    class CRC {
+        + calculate(data: &[u8]): u16
+        + validate(data: &[u8], crc: u16): bool
+    }
+
+    class GoBackN {
+        - windowSize: usize
+        - frames: Vec<Frame>
+        + send(data: &[u8]): Result<(), Error>
+        + handleTimeouts(): Result<(), Error>
+    }
+
+    Client --> Frame : uses
+    Server --> Frame : uses
+    Frame --> CRC : calculates
+    Frame --> ByteStuffing : applies
+    Client --> Tunnel : sends via
+    Server --> Tunnel : receives from
+    Tunnel --> ByteStuffing : encodes
+    Tunnel --> CRC : validates
+    Client --> GoBackN : controls
+    GoBackN --> Frame : manages

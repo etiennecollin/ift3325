@@ -193,7 +193,7 @@ async fn assembler(
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
-    info!("Received data from: {:?}: {}", addr, data_trimmed);
+    info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
     // Create the output directory if it does not exist
     create_dir_all(OUTPUT_DIR)

@@ -27,10 +27,6 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 ///
 /// This function removes the byte stuffing from the given frame bytes and
 /// returns the original frame bytes.
-///
-/// # Errors
-/// - If an abort sequence is detected
-/// - If the destuffing process fails because the frame is not properly formatted or incomplete
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 

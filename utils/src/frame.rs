@@ -1,6 +1,6 @@
 use crate::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
-    crc::crc_16_ccitt,
+    crc::{crc_16_ccitt, PolynomialSize},
 };
 
 /// An error that may occur when working with frames.
@@ -9,7 +9,8 @@ use crate::{
 /// - InvalidFCS: The FCS does not match the CRC
 /// - InvalidLength: The frame is too short
 /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
-/// - ByteDestuffingError: An error occurred during byte destuffing
+/// - AbortSequenceReceived: An abort sequence was received during byte destuffing
+/// - DestuffingError: An error occurred during byte destuffing
 #[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
@@ -23,6 +24,7 @@ pub enum FrameError {
 /// The type of a frame.
 /// The frame type is encoded as a single byte.
 #[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FrameType {
     /// Contains data to be transmitted
     Information = b'I',
@@ -33,7 +35,7 @@ pub enum FrameType {
     /// Requests immediate retransmission of data
     Reject = b'R',
     /// Indicates that the sender has finished sending data
-    ConnexionEnd = b'F',
+    ConnectionEnd = b'F',
     /// Forces the receiver to send a response
     P = b'P',
     /// Unknown frame type
@@ -48,7 +50,7 @@ impl From<u8> for FrameType {
             b'C' => FrameType::ConnectionStart,
             b'A' => FrameType::ReceiveReady,
             b'R' => FrameType::Reject,
-            b'F' => FrameType::ConnexionEnd,
+            b'F' => FrameType::ConnectionEnd,
             b'P' => FrameType::P,
             _ => FrameType::Unknown,
         }
@@ -75,7 +77,7 @@ pub struct Frame {
     pub data: Vec<u8>,
 
     /// The CRC-16 checksum stored in native endianess
-    fcs: Option<u16>,
+    fcs: Option<PolynomialSize>,
 
     /// The raw bytes of the frame before byte stuffing
     /// The frame is encoded as follows:
@@ -195,16 +197,6 @@ impl Frame {
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
     /// - 1 byte: boundary flag
-    ///
-    /// # Errors
-    ///
-    /// The following errors may occur:
-    /// - InvalidFrameType: The frame type is invalid
-    /// - InvalidFCS: The FCS does not match the CRC
-    /// - InvalidLength: The frame is too short
-    /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
-    ///
-    /// If there is a checksum error, the number of the frame is wrapped in the error.
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
         // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 4 {

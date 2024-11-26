@@ -29,7 +29,8 @@ use tokio::{
     task,
 };
 use utils::{
-    io::{flatten, reader, writer},
+    io::{reader, writer},
+    misc::flatten,
     window::Window,
 };
 
@@ -39,11 +40,6 @@ const OUTPUT_DIR: &str = "./output";
 ///
 /// This function sets up the logging, parses the command-line arguments to get the port number,
 /// binds to the specified address and port, and enters a loop to accept client connections.
-///
-/// # Panics
-///
-/// This function will exit the process with an error message if the port number is invalid
-/// or if binding to the address fails.
 #[tokio::main]
 async fn main() {
     // Initialize the logger
@@ -120,8 +116,8 @@ async fn main() {
 /// and checks if the client has requested to shut down the server.
 ///
 /// # Arguments
-/// * `stream` - The TCP stream associated with the connected client.
-/// * `addr` - The socket address of the client.
+/// - `stream` - The TCP stream associated with the connected client.
+/// - `addr` - The socket address of the client.
 ///
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,

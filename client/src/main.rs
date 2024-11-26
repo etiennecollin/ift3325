@@ -5,14 +5,16 @@
 //! during the execution of the program.
 //!
 //! ## Usage
-//! To run the client, specify the server address, port number, file path, and a placeholder argument:
+//! To run the client, specify the server address, port number, file path, and
+//! a placeholder argument:
 //!
 //! ```bash
 //! cargo run -- <address> <port> <file_path> <go_back_n>
 //! ```
 //!
-//! Replace `<address>` with the server's IP address (e.g., 127.0.0.1), `<port>` with the desired port number,
-//! and `<file_path>` with the path to the file you want to send.
+//! Replace `<address>` with the server's IP address (e.g., 127.0.0.1),
+//! `<port>` with the desired port number, and `<file_path>` with the path to
+//! the file you want to send.
 
 use env_logger::TimestampPrecision;
 use log::{error, info};
@@ -27,7 +29,8 @@ use std::{
 use tokio::{net::TcpStream, sync::mpsc};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, flatten, reader, writer},
+    io::{connection_request, create_frame_timer, reader, writer},
+    misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
 
@@ -35,10 +38,6 @@ use utils::{
 ///
 /// This function sets up logging, processes command-line arguments to extract the server address,
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
-///
-/// # Panics
-/// This function will exit the process with an error message if the arguments are incorrect,
-/// if the port number is invalid, or if the address format is invalid.
 #[tokio::main]
 async fn main() {
     // Initialize the logger
@@ -176,19 +175,22 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// Sends a file to the specified server address.
 ///
 /// This function opens the specified file, reads it and sends it over the
-/// established TCP connection.
+/// established TCP connection chunk by chunk. It creates a new frame for each
+/// chunk and sends it to the server. The function also handles resending frames
+/// in case of a timeout.
 ///
 /// # Arguments
-/// * `tx` - The sender channel to send the frame to the writer task.
-/// * `safe_window` - The window to manage the frames.
-/// * `condition` - The condition to signal tasks that space is available in the window.
-/// * `file_path` - The path to the file to be sent.
+/// - `tx` - The sender channel to send the frame to the writer task.
+/// - `safe_window` - The window to manage the frames.
+/// - `condition` - The condition to signal tasks that space is available in the window.
+/// - `file_path` - The path to the file to be sent.
 ///
 /// # Panics
-/// This function will exit the process with an error message if any of the following fails:
-/// - Opening the file
-/// - Reading the file contents
-/// - Sending the file contents to the server
+/// This function will panic if:
+/// - The window mutex cannot be locked.
+/// - The condition cannot be waited on.
+/// - The frame cannot be pushed to the window.
+/// - The frame cannot be sent to the writer task.
 async fn send_file(
     tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
@@ -215,9 +217,9 @@ async fn send_file(
     }
 
     // Read the file in chunks and create the frames to be sent
+    let mut num: u8;
     for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
         let frame_bytes: Vec<u8>;
-        let num: u8;
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
         {

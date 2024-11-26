@@ -6,7 +6,9 @@ use std::{
     sync::{Arc, Condvar, Mutex},
 };
 
+/// Type alias for a safe window that can be shared and mutated between threads
 pub type SafeWindow = Arc<Mutex<Window>>;
+/// Type alias for a condition variable that can be safely shared between threads
 pub type SafeCond = Arc<Condvar>;
 
 // Define the error type for the window
@@ -19,11 +21,16 @@ pub enum WindowError {
 /// A sliding window for a Go-Back-N protocol.
 /// It implements a deque with a maximum size of `WINDOW_SIZE`.
 pub struct Window {
+    /// The frames in the window
     pub frames: VecDeque<Frame>,
+    /// Flag to resend all frames in the window
     pub resend_all: bool,
+    /// Flag to indicate if the connection is established
     pub is_connected: bool,
+    /// Flag to indicate if the window is using the selective reject protocol
     pub srej: bool,
-    pub waiting_disconnect: bool,
+    /// Flag to indicate if a disconnect request was sent
+    pub sent_disconnect_request: bool,
 }
 
 impl Window {
@@ -46,12 +53,12 @@ impl Window {
             resend_all: false,
             is_connected: false,
             srej: false,
-            waiting_disconnect: false,
+            sent_disconnect_request: false,
         }
     }
 
     /// Get the maximum number of frames that can be in the window
-    pub fn get_size(&self) -> usize {
+    pub fn get_max_size(&self) -> usize {
         if self.srej {
             Self::SIZE_SREJ
         } else {
@@ -60,8 +67,9 @@ impl Window {
     }
 
     /// Push a frame to the back of the window
+    /// If the window is full, an error is returned
     pub fn push(&mut self, frame: Frame) -> Result<(), WindowError> {
-        if self.frames.len() == self.get_size() {
+        if self.frames.len() == self.get_max_size() {
             return Err(WindowError::Full);
         } else {
             self.frames.push_back(frame);
@@ -84,7 +92,7 @@ impl Window {
 
     /// Check if the window is full
     pub fn is_full(&self) -> bool {
-        self.frames.len() == self.get_size()
+        self.frames.len() == self.get_max_size()
     }
 
     /// Check if the window contains a frame with the given number
@@ -97,7 +105,12 @@ impl Window {
         self.frames.is_empty()
     }
 
-    /// Pop frames from the front of the window until the frame with the given number is reached
+    /// Pop frames from the front of the window until the frame with the given number is reached.
+    ///
+    /// # Arguments
+    /// - `num`: The number of the frame to pop until
+    /// - `inclusive`: If true, the frame with the given number is also popped
+    /// - `condition`: The condition variable to notify the send task
     pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) -> usize {
         let initial_len = self.frames.len();
 

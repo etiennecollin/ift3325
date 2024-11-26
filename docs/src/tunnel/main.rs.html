@@ -291,23 +291,54 @@
 <a href="#291" id="291">291</a>
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>env_logger::TimestampPrecision;
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A pair of TCP streams that represent a client-server connection.
+//!
+//! The tunnel reads frames from the client and sends them to the server. I then
+//! reads frames from the server and sends them to the client. It introduces
+//! errors in the communication based on the drop and flip probabilities.
+//!
+//! ## Usage
+//! To run the tunnel, simply execute the following command in the terminal:
+//!
+//! ```bash
+//! cargo run -- &lt;in_port&gt; &lt;out_address&gt; &lt;out_port&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;"
+//! ```
+//!
+//! Replace `&lt;in_port&gt;` by the port number the client will connect to,
+//! `&lt;out_address&gt;` by the address of the server to connect to, `&lt;out_port&gt;`
+//! by the port number of the server to connect to, `&lt;prob_frame_drop&gt;` by the
+//! probability of dropping a frame, and `&lt;prob_bit_flip&gt;` by the probability
+//! of flipping a bit in a frame.
+//!
+//! The frobabilities are givven as floating point numbers between 0 and 1.
+
+</span><span class="kw">use </span>env_logger::TimestampPrecision;
 <span class="kw">use </span>log::{error, info, warn};
 <span class="kw">use </span>std::{env, net::SocketAddr, process::exit};
 <span class="kw">use </span>tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream,
-    },
+    io::AsyncReadExt,
+    net::{tcp::OwnedReadHalf, TcpListener, TcpStream},
     sync::mpsc,
     task::{<span class="self">self</span>, JoinHandle},
 };
-<span class="kw">use </span>utils::{frame::Frame, io::flatten};
+<span class="kw">use </span>utils::{frame::Frame, io::writer, misc::flatten};
 
 <span class="doccomment">/// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
-
 </span><span class="attr">#[tokio::main]
 </span><span class="kw">async fn </span>main() {
     <span class="comment">// Initialize the logger
@@ -427,7 +458,12 @@
     }
 }
 
-<span class="kw">async fn </span>handle_connection(
+<span class="doccomment">/// Handles a single client connection.
+/// This function reads frames from the client and sends them to the server.
+/// It also reads frames from the server and sends them to the client.
+/// It introduces errors in the communication based on the drop and flip probabilities.
+/// The function returns when the client or server closes the connection.
+</span><span class="kw">async fn </span>handle_connection(
     client_stream: TcpStream,
     server_stream: TcpStream,
     drop_probability: f32,
@@ -474,21 +510,10 @@
     };
 }
 
-<span class="kw">fn </span>writer(
-    <span class="kw-2">mut </span>stream: OwnedWriteHalf,
-    <span class="kw-2">mut </span>rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;,
-) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
-    tokio::spawn(<span class="kw">async move </span>{
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(frame) = rx.recv().<span class="kw">await </span>{
-            stream.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await</span>.unwrap();
-            stream.flush().<span class="kw">await</span>.unwrap();
-        }
-
-        <span class="prelude-val">Ok</span>(())
-    })
-}
-
-<span class="kw">fn </span>handle_client(
+<span class="doccomment">/// Handles the client stream.
+/// This function reads frames from the client and sends them to the server.
+/// It introduces errors in the communication based on the drop and flip probabilities.
+</span><span class="kw">fn </span>handle_client(
     <span class="kw-2">mut </span>client_read: OwnedReadHalf,
     server_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     drop_probability: f32,
@@ -537,7 +562,10 @@
     })
 }
 
-<span class="kw">fn </span>handle_server(
+<span class="doccomment">/// Handles the server stream.
+/// This function reads frames from the server and sends them to the client.
+/// It introduces errors in the communication based on the drop and flip probabilities.
+</span><span class="kw">fn </span>handle_server(
     <span class="kw-2">mut </span>server_read: OwnedReadHalf,
     client_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     drop_probability: f32,

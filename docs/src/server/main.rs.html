@@ -280,10 +280,6 @@
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
@@ -315,7 +311,8 @@
     task,
 };
 <span class="kw">use </span>utils::{
-    io::{flatten, reader, writer},
+    io::{reader, writer},
+    misc::flatten,
     window::Window,
 };
 
@@ -325,11 +322,6 @@
 ///
 /// This function sets up the logging, parses the command-line arguments to get the port number,
 /// binds to the specified address and port, and enters a loop to accept client connections.
-///
-/// # Panics
-///
-/// This function will exit the process with an error message if the port number is invalid
-/// or if binding to the address fails.
 </span><span class="attr">#[tokio::main]
 </span><span class="kw">async fn </span>main() {
     <span class="comment">// Initialize the logger
@@ -406,8 +398,8 @@
 /// and checks if the client has requested to shut down the server.
 ///
 /// # Arguments
-/// * `stream` - The TCP stream associated with the connected client.
-/// * `addr` - The socket address of the client.
+/// - `stream` - The TCP stream associated with the connected client.
+/// - `addr` - The socket address of the client.
 ///
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
@@ -479,25 +471,25 @@
     <span class="comment">// Parse the data as a UTF-8 string
     </span><span class="kw">let </span>data_str = String::from_utf8_lossy(<span class="kw-2">&amp;</span>data);
     <span class="kw">let </span>data_trimmed = data_str.trim();
-    <span class="macro">info!</span>(<span class="string">"Received data from: {:?}: {}"</span>, addr, data_trimmed);
+    <span class="comment">// info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
-    <span class="comment">// Create the output directory if it does not exist
+    // Create the output directory if it does not exist
     </span>create_dir_all(OUTPUT_DIR)
         .<span class="kw">await
         </span>.expect(<span class="string">"Failed to create output directory"</span>);
 
     <span class="comment">// Save the data to a file
-    </span><span class="kw">let </span>filepath = <span class="macro">format!</span>(<span class="string">"{}/client_{}.txt"</span>, OUTPUT_DIR, addr);
-    <span class="kw">let </span><span class="kw-2">mut </span>file = File::create(<span class="kw-2">&amp;</span>filepath)
-        .<span class="kw">await
-        </span>.expect(<span class="string">"Failed to create test file"</span>);
-    file.write_all(<span class="kw-2">&amp;</span>data)
-        .<span class="kw">await
-        </span>.expect(<span class="string">"Failed to write to file"</span>);
+    // let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    // let mut file = File::create(&amp;filepath)
+    //     .await
+    //     .expect("Failed to create test file");
+    // file.write_all(&amp;data)
+    //     .await
+    //     .expect("Failed to write to file");
+    //
+    // info!("Data saved to: {}", filepath);
 
-    <span class="macro">info!</span>(<span class="string">"Data saved to: {}"</span>, filepath);
-
-    <span class="comment">// Check if the client requested server shutdown
+    // Check if the client requested server shutdown
     </span><span class="kw">if </span>data_trimmed == <span class="string">"shutdown" </span>{
         <span class="prelude-val">Ok</span>(<span class="string">"true"</span>)
     } <span class="kw">else </span>{

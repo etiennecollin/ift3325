@@ -1,1 +1,1 @@
-searchState.loadedDescShard("tunnel", 0, "This is a simple tunnel that takes frames from a client …")
+searchState.loadedDescShard("tunnel", 0, "A pair of TCP streams that represent a client-server …\nHandles the client stream. This function reads frames from …\nHandles a single client connection. This function reads …\nHandles the server stream. This function reads frames from …\nThis is a simple tunnel that takes frames from a client …")

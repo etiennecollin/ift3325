@@ -454,6 +454,11 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
                     }
                 };
 
+                // If the connection is not established, only send connection start frames
+                if !window.is_connected && frame.frame_type != FrameType::ConnectionStart.into() {
+                    return;
+                }
+
                 frame_bytes = frame.to_bytes();
             }
 

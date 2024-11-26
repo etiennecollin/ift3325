@@ -1,10 +1,17 @@
-type PolynomialSize = u16;
+/// CRC-16 CCITT implementation.
+pub type PolynomialSize = u16;
+/// CRC-16 CCITT polynomial in hex form.
 const POLYNOMIAL: PolynomialSize = 0x1021;
+/// Degree of the polynomial.
 const POLYNOMIAL_WIDTH: usize = 16;
+/// Most significant bit of the polynomial.
 const MSB: PolynomialSize = 1 << (POLYNOMIAL_WIDTH - 1);
 // const INITIAL_VALUE: PolynomialSize = PolynomialSize::MAX;
+/// Initial value for the CRC-16 algorithm.
 const INITIAL_VALUE: PolynomialSize = 0;
+/// Final XOR value for the CRC-16 algorithm.
 const FINAL_XOR: PolynomialSize = 0;
+/// Lookup table for the CRC-16 algorithm.
 const LUT: [PolynomialSize; 256] = lookup_table();
 
 /// Generate a lookup table for the CRC-16 algorithm.

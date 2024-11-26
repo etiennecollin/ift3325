@@ -1,20 +1,37 @@
+//! A pair of TCP streams that represent a client-server connection.
+//!
+//! The tunnel reads frames from the client and sends them to the server. I then
+//! reads frames from the server and sends them to the client. It introduces
+//! errors in the communication based on the drop and flip probabilities.
+//!
+//! ## Usage
+//! To run the tunnel, simply execute the following command in the terminal:
+//!
+//! ```bash
+//! cargo run -- <in_port> <out_address> <out_port> <prob_frame_drop> <prob_bit_flip>"
+//! ```
+//!
+//! Replace `<in_port>` by the port number the client will connect to,
+//! `<out_address>` by the address of the server to connect to, `<out_port>`
+//! by the port number of the server to connect to, `<prob_frame_drop>` by the
+//! probability of dropping a frame, and `<prob_bit_flip>` by the probability
+//! of flipping a bit in a frame.
+//!
+//! The frobabilities are givven as floating point numbers between 0 and 1.
+
 use env_logger::TimestampPrecision;
 use log::{error, info, warn};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream,
-    },
+    io::AsyncReadExt,
+    net::{tcp::OwnedReadHalf, TcpListener, TcpStream},
     sync::mpsc,
     task::{self, JoinHandle},
 };
-use utils::{frame::Frame, io::flatten};
+use utils::{frame::Frame, io::writer, misc::flatten};
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
-
 #[tokio::main]
 async fn main() {
     // Initialize the logger
@@ -134,6 +151,11 @@ async fn main() {
     }
 }
 
+/// Handles a single client connection.
+/// This function reads frames from the client and sends them to the server.
+/// It also reads frames from the server and sends them to the client.
+/// It introduces errors in the communication based on the drop and flip probabilities.
+/// The function returns when the client or server closes the connection.
 async fn handle_connection(
     client_stream: TcpStream,
     server_stream: TcpStream,
@@ -181,20 +203,9 @@ async fn handle_connection(
     };
 }
 
-fn writer(
-    mut stream: OwnedWriteHalf,
-    mut rx: mpsc::Receiver<Vec<u8>>,
-) -> JoinHandle<Result<(), &'static str>> {
-    tokio::spawn(async move {
-        while let Some(frame) = rx.recv().await {
-            stream.write_all(&frame).await.unwrap();
-            stream.flush().await.unwrap();
-        }
-
-        Ok(())
-    })
-}
-
+/// Handles the client stream.
+/// This function reads frames from the client and sends them to the server.
+/// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_client(
     mut client_read: OwnedReadHalf,
     server_tx: mpsc::Sender<Vec<u8>>,
@@ -244,6 +255,9 @@ fn handle_client(
     })
 }
 
+/// Handles the server stream.
+/// This function reads frames from the server and sends them to the client.
+/// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_server(
     mut server_read: OwnedReadHalf,
     client_tx: mpsc::Sender<Vec<u8>>,

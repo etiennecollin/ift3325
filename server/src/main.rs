@@ -29,7 +29,8 @@ use tokio::{
     task,
 };
 use utils::{
-    io::{flatten, reader, writer},
+    io::{reader, writer},
+    misc::flatten,
     window::Window,
 };
 
@@ -39,11 +40,6 @@ const OUTPUT_DIR: &str = "./output";
 ///
 /// This function sets up the logging, parses the command-line arguments to get the port number,
 /// binds to the specified address and port, and enters a loop to accept client connections.
-///
-/// # Panics
-///
-/// This function will exit the process with an error message if the port number is invalid
-/// or if binding to the address fails.
 #[tokio::main]
 async fn main() {
     // Initialize the logger
@@ -120,8 +116,8 @@ async fn main() {
 /// and checks if the client has requested to shut down the server.
 ///
 /// # Arguments
-/// * `stream` - The TCP stream associated with the connected client.
-/// * `addr` - The socket address of the client.
+/// - `stream` - The TCP stream associated with the connected client.
+/// - `addr` - The socket address of the client.
 ///
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
@@ -193,7 +189,7 @@ async fn assembler(
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
-    info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
+    // info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
     // Create the output directory if it does not exist
     create_dir_all(OUTPUT_DIR)
@@ -201,15 +197,15 @@ async fn assembler(
         .expect("Failed to create output directory");
 
     // Save the data to a file
-    let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
-    let mut file = File::create(&filepath)
-        .await
-        .expect("Failed to create test file");
-    file.write_all(&data)
-        .await
-        .expect("Failed to write to file");
-
-    info!("Data saved to: {}", filepath);
+    // let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    // let mut file = File::create(&filepath)
+    //     .await
+    //     .expect("Failed to create test file");
+    // file.write_all(&data)
+    //     .await
+    //     .expect("Failed to write to file");
+    //
+    // info!("Data saved to: {}", filepath);
 
     // Check if the client requested server shutdown
     if data_trimmed == "shutdown" {

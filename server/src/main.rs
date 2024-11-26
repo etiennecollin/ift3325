@@ -189,7 +189,7 @@ async fn assembler(
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
-    // info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
+    info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
     // Create the output directory if it does not exist
     create_dir_all(OUTPUT_DIR)
@@ -197,15 +197,15 @@ async fn assembler(
         .expect("Failed to create output directory");
 
     // Save the data to a file
-    // let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
-    // let mut file = File::create(&filepath)
-    //     .await
-    //     .expect("Failed to create test file");
-    // file.write_all(&data)
-    //     .await
-    //     .expect("Failed to write to file");
-    //
-    // info!("Data saved to: {}", filepath);
+    let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    let mut file = File::create(&filepath)
+        .await
+        .expect("Failed to create test file");
+    file.write_all(&data)
+        .await
+        .expect("Failed to write to file");
+
+    info!("Data saved to: {}", filepath);
 
     // Check if the client requested server shutdown
     if data_trimmed == "shutdown" {

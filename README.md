@@ -1,5 +1,7 @@
 # IFT3325 - Devoir 2
 
+![rust tests workflow](https://github.com/etiennecollin/ift3325/actions/workflows/rust.yml/badge.svg)
+
 ## Usage
 
 Run the server:

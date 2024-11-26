@@ -215,9 +215,9 @@ async fn send_file(
     }
 
     // Read the file in chunks and create the frames to be sent
+    let mut num: u8;
     for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
         let frame_bytes: Vec<u8>;
-        let num: u8;
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
         {

@@ -23,6 +23,7 @@ pub enum FrameError {
 /// The type of a frame.
 /// The frame type is encoded as a single byte.
 #[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FrameType {
     /// Contains data to be transmitted
     Information = b'I',

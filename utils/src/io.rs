@@ -36,6 +36,14 @@ pub fn reader(
         let mut next_info_frame_num: u8 = 0;
 
         loop {
+            if window
+                .lock()
+                .expect("Failed to lock window")
+                .sent_disconnect_request
+            {
+                return Ok("Reader task ended, sent disconnect request");
+            }
+
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
             let read_length = match stream.read(&mut buf).await {

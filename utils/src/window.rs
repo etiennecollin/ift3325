@@ -23,7 +23,7 @@ pub struct Window {
     pub resend_all: bool,
     pub is_connected: bool,
     pub srej: bool,
-    pub waiting_disconnect: bool,
+    pub sent_disconnect_request: bool,
 }
 
 impl Window {
@@ -46,12 +46,12 @@ impl Window {
             resend_all: false,
             is_connected: false,
             srej: false,
-            waiting_disconnect: false,
+            sent_disconnect_request: false,
         }
     }
 
     /// Get the maximum number of frames that can be in the window
-    pub fn get_size(&self) -> usize {
+    pub fn get_max_size(&self) -> usize {
         if self.srej {
             Self::SIZE_SREJ
         } else {
@@ -61,7 +61,7 @@ impl Window {
 
     /// Push a frame to the back of the window
     pub fn push(&mut self, frame: Frame) -> Result<(), WindowError> {
-        if self.frames.len() == self.get_size() {
+        if self.frames.len() == self.get_max_size() {
             return Err(WindowError::Full);
         } else {
             self.frames.push_back(frame);
@@ -84,7 +84,7 @@ impl Window {
 
     /// Check if the window is full
     pub fn is_full(&self) -> bool {
-        self.frames.len() == self.get_size()
+        self.frames.len() == self.get_max_size()
     }
 
     /// Check if the window contains a frame with the given number

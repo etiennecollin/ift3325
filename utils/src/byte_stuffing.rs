@@ -73,7 +73,7 @@ mod tests {
                 Frame::BOUNDARY_FLAG,
             ]
         );
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -90,7 +90,7 @@ mod tests {
         let stuffed_data = byte_stuffing(&data);
         let expected_stuffed_data = [Frame::BOUNDARY_FLAG, 0xFF, Frame::BOUNDARY_FLAG];
         assert_eq!(stuffed_data, expected_stuffed_data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -106,7 +106,7 @@ mod tests {
             Frame::BOUNDARY_FLAG,
         ];
         let stuffed_data = byte_stuffing(&data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -114,7 +114,7 @@ mod tests {
     fn byte_stuffing_empty_test() {
         let data = [];
         let stuffed_data = byte_stuffing(&data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 }

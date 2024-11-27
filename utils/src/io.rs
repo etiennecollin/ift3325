@@ -34,8 +34,8 @@ pub fn reader(
     mut stream: OwnedReadHalf,
     window: SafeWindow,
     condition: SafeCond,
-    writer_tx: Option<mpsc::Sender<Vec<u8>>>,
-    assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
+    writer_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    assembler_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
         let mut frame_buf = Vec::with_capacity(Frame::MAX_SIZE);
@@ -85,16 +85,24 @@ pub fn reader(
                     // Handle the frame and check if the connection should be terminated
                     if handle_reception(
                         frame,
-                        &window,
-                        &condition,
+                        window.clone(),
+                        condition.clone(),
                         writer_tx.as_ref(),
                         assembler_tx.as_ref(),
                         &mut next_info_frame_num,
-                    )
-                    .await
-                    {
+                    ) {
                         return Ok("Connection ended by server");
                     }
+                    debug!(
+                        "Window after handling: {:?}",
+                        window
+                            .lock()
+                            .expect("Failed to lock window")
+                            .frames
+                            .iter()
+                            .map(|(frame, handle)| (frame.num, handle))
+                            .collect::<Vec<(u8, &JoinHandle<()>)>>()
+                    );
 
                     debug!("Reader finished handling frame");
 
@@ -134,23 +142,23 @@ pub fn reader(
 /// - The lock of the window fails
 /// - The `tx` is not provided and the frame is a rejection
 /// - The sender fails to send the frames
-pub async fn handle_reception(
+pub fn handle_reception(
     frame: Frame,
-    safe_window: &SafeWindow,
-    condition: &SafeCond,
-    writer_tx: Option<&mpsc::Sender<Vec<u8>>>,
-    assembler_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    safe_window: SafeWindow,
+    condition: SafeCond,
+    writer_tx: Option<&mpsc::UnboundedSender<Vec<u8>>>,
+    assembler_tx: Option<&mpsc::UnboundedSender<Vec<u8>>>,
     expected_info_num: &mut u8,
 ) -> bool {
     let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
 
-    let status = match frame.frame_type.into() {
+    match frame.frame_type.into() {
         FrameType::ReceiveReady => handle_receive_ready(safe_window, &frame, condition),
-        FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx, condition).await,
+        FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx, condition),
         FrameType::ConnectionStart => {
-            handle_connection_start(safe_window, &frame, writer_tx, condition).await
+            handle_connection_start(safe_window, &frame, writer_tx, condition)
         }
-        FrameType::Reject => handle_reject(safe_window, &frame, writer_tx, condition).await,
+        FrameType::Reject => handle_reject(safe_window, &frame, writer_tx, condition),
         FrameType::Information => {
             let assembler_tx = assembler_tx.expect("No sender provided to handle frame reassembly");
             handle_information(
@@ -161,24 +169,10 @@ pub async fn handle_reception(
                 assembler_tx,
                 expected_info_num,
             )
-            .await
         }
-        FrameType::P => handle_p(writer_tx, expected_info_num).await,
+        FrameType::P => handle_p(writer_tx, expected_info_num),
         FrameType::Unknown => false,
-    };
-
-    debug!(
-        "Window: {:?}",
-        safe_window
-            .lock()
-            .expect("Failed to lock window")
-            .frames
-            .iter()
-            .map(|(frame, handle)| (frame.num, handle))
-            .collect::<Vec<(u8, &JoinHandle<()>)>>()
-    );
-
-    status
+    }
 }
 
 /// Sends a frame to the server.
@@ -191,9 +185,12 @@ pub async fn handle_reception(
 /// - `rx` - The receiver channel to receive the frames to send.
 pub fn writer(
     mut stream: OwnedWriteHalf,
-    mut rx: mpsc::Receiver<Vec<u8>>,
+    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
+        // FIXME:: The writer gets overwhelmed and stops sending frames. The
+        // tunnel should be able to send all the frames.
+
         // Receive frames until all tx are dropped
         while let Some(frame) = rx.recv().await {
             // Send the file contents to the server
@@ -212,6 +209,8 @@ pub fn writer(
         if stream.shutdown().await.is_err() {
             return Err("Failed to close connection");
         };
+
+        rx.close();
         Ok("Closed writer")
     })
 }
@@ -229,7 +228,10 @@ pub fn writer(
 /// # Panics
 /// The function will panic if:
 /// - The sender fails to send the frame
-pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
+pub fn create_frame_timer(
+    frame_bytes: Vec<u8>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+) -> JoinHandle<()> {
     debug!("Starting frame timer for frame {}", frame_bytes[2]);
     tokio::spawn(async move {
         debug!("Frame timer started for frame {}", frame_bytes[2]);
@@ -240,9 +242,7 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
             interval.tick().await;
 
             info!("Timeout expired, resending frame {}", frame_bytes[2]);
-            tx.send(frame_bytes.clone())
-                .await
-                .expect("Failed to send frame");
+            tx.send(frame_bytes.clone()).expect("Failed to send frame");
         }
     })
 }
@@ -267,11 +267,11 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
 /// - The frame fails to be sent to the writer task
 /// - The condition fails to wait
 pub async fn connection_request(
-    safe_window: &SafeWindow,
+    safe_window: SafeWindow,
     connection_start: bool,
     srej: Option<u8>,
-    tx: mpsc::Sender<Vec<u8>>,
-    condition: &SafeCond,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    condition: SafeCond,
 ) {
     let frame_type = match connection_start {
         true => FrameType::ConnectionStart,
@@ -289,7 +289,6 @@ pub async fn connection_request(
 
     // Send the connection request frame
     tx.send(request_frame_bytes.clone())
-        .await
         .expect("Failed to send frame to writer task");
     info!("Sent connection request frame");
 

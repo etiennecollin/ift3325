@@ -6,7 +6,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},
 };
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 
 /// Type alias for a safe window that can be shared and mutated between threads.
 pub type SafeWindow = Arc<Mutex<Window>>;
@@ -79,7 +79,11 @@ impl Window {
     ///
     /// # Errors
     /// If the window is full, an error is returned
-    pub fn push(&mut self, frame: Frame, writer_tx: Sender<Vec<u8>>) -> Result<(), WindowError> {
+    pub fn push(
+        &mut self,
+        frame: Frame,
+        writer_tx: UnboundedSender<Vec<u8>>,
+    ) -> Result<(), WindowError> {
         if self.frames.len() == self.get_max_size() {
             return Err(WindowError::Full);
         } else {
@@ -94,7 +98,7 @@ impl Window {
     /// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    pub fn pop_front(&mut self, condition: &SafeCond) -> Option<WindowElement> {
+    pub fn pop_front(&mut self, condition: SafeCond) -> Option<WindowElement> {
         let popped = self.frames.pop_front();
 
         if let Some(popped) = &popped {
@@ -131,7 +135,7 @@ impl Window {
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
-    pub fn pop(&mut self, num: u8, condition: &SafeCond) -> Option<WindowElement> {
+    pub fn pop(&mut self, num: u8, condition: SafeCond) -> Option<WindowElement> {
         let i = self.frames.iter().position(|(frame, _)| frame.num == num);
         match i {
             Some(i) => {
@@ -158,7 +162,7 @@ impl Window {
     /// - `condition`: The condition variable to notify the send task
     ///
     /// Returns the number of frames popped
-    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) -> usize {
+    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: SafeCond) -> usize {
         // Get the index of "limit" frame in the window
         let i = match self.frames.iter().position(|(frame, _)| frame.num == num) {
             Some(i) => i,

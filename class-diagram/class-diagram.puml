@@ -1,6 +1,7 @@
 @startuml
 'skinparam linetype polyline
-skinparam nodesep 100
+skinparam nodesep 150
+skinparam ranksep 100
 
 class  "<<struct>>\nClient" as Client{
   - setup_connection(stream: TcpStream, srej: u8,file_path: String) 
@@ -63,9 +64,9 @@ class "<<struct>>\nWindow" as Window {
   - resend_all: bool
   - is_connected: bool
   - srej: bool
-  - waiting_disconnect: bool
+  - sent_disconnect_request: bool
   + new() Self
-  + get_size(&self) usize
+  + get_max_size(&self) usize
   + push(&mut self, frame: Frame) Result<(), WindowError>
   + pop_front(&mut self, condition: &SafeCond) Option<Frame>
   + is_full(&self) bool
@@ -92,7 +93,6 @@ enum WindowError {
     + reader(stream: OwnedReadHalf, window: SafeWindow, condition: SafeCond, writer_tx: Option<mpsc::Sender<Vec<u8>>>, assembler_tx: Option<mpsc::Sender<Vec<u8>>>) : JoinHandle<Result<&'static str, &'static str>>
     + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>) : JoinHandle<Result<&'static str, &'static str>>
     + handle_reception(frame: Frame, safe_window: &SafeWindow, condition: &SafeCond, writer_tx: Option<&mpsc::Sender<Vec<u8>>, assembler_tx: Option<&mpsc::Sender<Vec<u8>>, expected_info_num: &mut u8) : bool
-    + flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str> 
     + create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>)
     }
 
@@ -102,7 +102,18 @@ annotation "<<package>>\nByteStuffing" as ByteStuffing {
     + byte_destuffing(frame_bytes: &[u8]) : Result<Vec<u8>, FrameError>
   }
 
+  annotation "<<package>>\n FrameHandler" as FrameHandler {
+    + handle_receive_ready(safe_window: &SafeWindow, frame: &Frame, condition:&SafeCond): bool
+    + handle_connection_end(safe_window: &SafeWindow, writer_tx: &Sender<Vec<u8>>, condition: &SafeCond): bool
+    + handle_reject(safe_window: &SafeWindow, frame: &Frame, writer_tx:&Sender<Vec<u8>>, condition: &SafeCond): bool
+    + handle_information(safe_window: &SafeWindow, frame: Frame, writer_tx:&Sender<Vec<u8>>, condition: &SafeCond, assembler_tx: &Sender<Vec<u8>>,expected_info_num: &mut u8): bool
+    + handle_dropped_frame(frame: &Frame, safe_window: &SafeWindow, writer_tx:&Sender<Vec<u8>>, expected_info_num: &u8): bool
+    + handle_p(writer_tx: &Sender<Vec<u8>>, expected_info_num: &u8): bool
+    }
 
+    annotation "<<package>>\n Misc" as Misc {
+    + flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str>
+    }
 
 
 Client --> Tunnel : "reçoit les \nframes du client"
@@ -132,6 +143,12 @@ Tunnel --> Frame : "corromps\net ou \ndétruit\nou ne fait rien"
 Tunnel --> IO : utilise 
 Client --> IO : utilise 
 Server --> IO : utilise
+
+IO --> FrameHandler : utilise
+
+Client --> Misc : utilise 
+Server --> Misc : utilise
+Tunnel --> Misc : utilise
 
 /'
 Utils --|> ByteStuffing : contient

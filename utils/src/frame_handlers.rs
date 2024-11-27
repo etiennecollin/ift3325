@@ -281,7 +281,7 @@ pub async fn handle_dropped_frame(
         .expect("Failed to send reject frame");
 
     // Run a timer to resend the frame if it is not received
-    create_frame_timer(safe_window.clone(), *expected_info_num, writer_tx.clone()).await;
+    create_frame_timer(safe_window.clone(), *expected_info_num, writer_tx.clone());
 
     info!("Sent reject for frame {}", expected_info_num);
     false

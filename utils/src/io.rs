@@ -213,8 +213,14 @@ pub fn writer(
 /// The function will panic if:
 /// - The lock of the window fails
 /// - The sender fails to send the frame
-pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>) {
+pub fn create_frame_timer(
+    safe_window: SafeWindow,
+    num: u8,
+    tx: mpsc::Sender<Vec<u8>>,
+) -> JoinHandle<()> {
+    debug!("Starting frame timer for frame {}", num);
     tokio::spawn(async move {
+        debug!("Frame timer started for frame {}", num);
         time::sleep(time::Duration::from_secs(Window::FRAME_TIMEOUT)).await;
         let mut interval = time::interval(time::Duration::from_secs(Window::FRAME_TIMEOUT));
         loop {
@@ -255,7 +261,7 @@ pub async fn create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Send
             info!("Timeout expired, resending frame {}", num);
             tx.send(frame_bytes).await.expect("Failed to send frame");
         }
-    });
+    })
 }
 
 /// Sends a connection request frame to the server.
@@ -323,7 +329,7 @@ pub async fn connection_request(
         // Run a timer to resend the request if it is not acknowledged
         let tx_clone = tx.clone();
         let window_clone = safe_window.clone();
-        create_frame_timer(window_clone, srej, tx_clone).await;
+        let handle = create_frame_timer(window_clone, srej, tx_clone);
 
         // Wait for the connection to be established
         {
@@ -333,6 +339,7 @@ pub async fn connection_request(
                     .wait(window)
                     .expect("Failed to wait for condition");
             }
+            handle.abort();
         }
     }
     safe_window

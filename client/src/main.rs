@@ -255,7 +255,7 @@ async fn send_file(
         // Run a timer to resend the frame if it is not acknowledged
         let tx_clone = tx.clone();
         let safe_window_clone = safe_window.clone();
-        create_frame_timer(safe_window_clone, num, tx_clone).await;
+        create_frame_timer(safe_window_clone, num, tx_clone);
     }
 
     // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped

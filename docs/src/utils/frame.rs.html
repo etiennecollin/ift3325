@@ -404,8 +404,14 @@
 <a href="#404" id="404">404</a>
 <a href="#405" id="405">405</a>
 <a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-</pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+</pre></div><pre class="rust"><code><span class="doccomment">//! The frame module contains the Frame struct, the FrameType enum and the
+//! FrameError enum.
+//!
+//! The Frame struct represents a frame in the HDLC protocol.
+//! The FrameType enum represents the type of a frame.
+//! The FrameError enum represents an error that may occur when working with frames.
+
+</span><span class="kw">use crate</span>::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
     crc::{crc_16_ccitt, PolynomialSize},
 };
@@ -597,25 +603,18 @@
     <span class="doccomment">/// Create a new frame from the given bytes.
     ///
     /// The frame is decoded as follows:
-    /// - 1 byte: boundary flag
     /// - Content
     ///    - 1 byte: frame_type
     ///    - 1 byte: num
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
-    /// - 1 byte: boundary flag
     </span><span class="kw">pub fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Frame, FrameError&gt; {
-        <span class="comment">// The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
+        <span class="comment">// The frame should contain at least 4 bytes: 1 frame_type, 1 num, 2 FCS
         </span><span class="kw">if </span>bytes.len() &lt; <span class="number">4 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidLength(bytes.len()));
         }
 
-        <span class="comment">// The frame should start with a boundary flag
-        // if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
-        //     return Err(FrameError::MissingBoundaryFlag);
-        // }
-
-        // Destuff the frame content
+        <span class="comment">// Destuff the frame content
         </span><span class="kw">let </span>content = byte_destuffing(bytes)<span class="question-mark">?</span>;
 
         <span class="comment">// Extract the frame information
@@ -748,41 +747,37 @@
     <span class="attr">#[test]
     </span><span class="kw">fn </span>bytes_to_frame_conversion_test() {
         <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[
-            <span class="number">0x7E</span>,
             FrameType::ConnectionStart.into(),
-            <span class="number">0x02</span>,
+            <span class="number">0x00</span>,
             <span class="number">0x03</span>,
             <span class="number">0x04</span>,
-            <span class="number">0x8E</span>,
-            <span class="number">0xF7</span>,
-            <span class="number">0x7E</span>,
+            <span class="number">0xE0</span>,
+            <span class="number">0x97</span>,
         ];
         <span class="kw">let </span>frame = Frame::from_bytes(bytes);
 
         <span class="comment">// Check that the frame is correct
         </span><span class="macro">assert!</span>(frame.is_ok());
         <span class="kw">let </span>frame = frame.unwrap();
-        <span class="macro">assert_eq!</span>(frame.frame_type, bytes[<span class="number">1</span>]);
-        <span class="macro">assert_eq!</span>(frame.num, bytes[<span class="number">2</span>]);
-        <span class="macro">assert_eq!</span>(frame.data, bytes[<span class="number">3</span>..bytes.len() - <span class="number">3</span>].to_vec());
-        <span class="macro">assert_eq!</span>(frame.fcs.unwrap(), <span class="number">0x8EF7</span>);
-        <span class="macro">assert_eq!</span>(frame.content.unwrap(), bytes[<span class="number">1</span>..bytes.len() - <span class="number">1</span>].to_vec());
+        <span class="macro">assert_eq!</span>(frame.frame_type, bytes[<span class="number">0</span>]);
+        <span class="macro">assert_eq!</span>(frame.num, bytes[<span class="number">1</span>]);
+        <span class="macro">assert_eq!</span>(frame.data, bytes[<span class="number">2</span>..bytes.len() - <span class="number">2</span>].to_vec());
+        <span class="macro">assert_eq!</span>(frame.fcs.unwrap(), <span class="number">0xE097</span>);
+        <span class="macro">assert_eq!</span>(frame.content.unwrap(), bytes.to_vec());
         <span class="macro">assert_eq!</span>(frame.content_stuffed.unwrap(), bytes);
     }
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>frame_empty_data_test() {
-        <span class="kw">let </span>frame = Frame::new(FrameType::ConnectionStart, <span class="number">0x02</span>, <span class="macro">vec!</span>[]);
+        <span class="kw">let </span>frame = Frame::new(FrameType::ConnectionStart, <span class="number">0x00</span>, <span class="macro">vec!</span>[]);
         <span class="kw">let </span>bytes = frame.to_bytes();
 
-        <span class="macro">println!</span>(<span class="string">"Bytes RAW: {:X?}"</span>, bytes);
-
         <span class="comment">// Set the expected values
-        </span><span class="kw">let </span>expected_fcs = <span class="number">0x78DDu16</span>;
+        </span><span class="kw">let </span>expected_fcs = <span class="number">0x589Fu16</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>expected_bytes = <span class="macro">vec!</span>[
             Frame::BOUNDARY_FLAG,
             FrameType::ConnectionStart.into(),
-            <span class="number">0x02</span>,
+            <span class="number">0x00</span>,
         ];
         expected_bytes.extend_from_slice(<span class="kw-2">&amp;</span>expected_fcs.to_be_bytes());
         expected_bytes.push(Frame::BOUNDARY_FLAG);
@@ -796,7 +791,7 @@
         <span class="macro">assert_eq!</span>(bytes, expected_bytes);
 
         <span class="comment">// Decode the frame from the bytes
-        </span><span class="kw">let </span>frame = Frame::from_bytes(<span class="kw-2">&amp;</span>bytes);
+        </span><span class="kw">let </span>frame = Frame::from_bytes(<span class="kw-2">&amp;</span>bytes[<span class="number">1</span>..expected_bytes.len() - <span class="number">1</span>]);
 
         <span class="comment">// Check that the frame is correct
         </span><span class="macro">assert!</span>(frame.is_ok());
@@ -809,7 +804,10 @@
             frame.content.unwrap(),
             expected_bytes[<span class="number">1</span>..expected_bytes.len() - <span class="number">1</span>]
         );
-        <span class="macro">assert_eq!</span>(frame.content_stuffed.unwrap(), bytes);
+        <span class="macro">assert_eq!</span>(
+            frame.content_stuffed.unwrap(),
+            bytes[<span class="number">1</span>..expected_bytes.len() - <span class="number">1</span>]
+        );
     }
 }
 </code></pre></div></section></main></body></html>

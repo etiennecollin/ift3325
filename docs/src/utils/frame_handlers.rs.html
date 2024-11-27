@@ -300,14 +300,22 @@
 <a href="#300" id="300">300</a>
 <a href="#301" id="301">301</a>
 <a href="#302" id="302">302</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>log::{info, warn};
-<span class="kw">use </span>tokio::sync::mpsc::Sender;
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Frame handlers for the receiver.
+//!
+//! Each handler is responsible for handling a specific frame type and
+//! returning a boolean indicating if the connection should be terminated.
 
-<span class="kw">use crate</span>::{
+</span><span class="kw">use crate</span>::{
     frame::{Frame, FrameType},
     io::create_frame_timer,
     window::{SafeCond, SafeWindow, Window},
 };
+<span class="kw">use </span>log::{info, warn};
+<span class="kw">use </span>tokio::sync::mpsc::Sender;
 
 <span class="doccomment">/// Handles the receive ready frames.
 ///

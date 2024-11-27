@@ -144,9 +144,11 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>log::debug;
+<a href="#147" id="147">147</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A sliding window for the HDLC protocol.
 
-<span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
+</span><span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
+<span class="kw">use </span>log::debug;
 <span class="kw">use </span>std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},

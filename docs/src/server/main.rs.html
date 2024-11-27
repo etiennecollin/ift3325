@@ -471,25 +471,25 @@
     <span class="comment">// Parse the data as a UTF-8 string
     </span><span class="kw">let </span>data_str = String::from_utf8_lossy(<span class="kw-2">&amp;</span>data);
     <span class="kw">let </span>data_trimmed = data_str.trim();
-    <span class="comment">// info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
+    <span class="macro">info!</span>(<span class="string">"Received data from: {:?}:\r\n{}"</span>, addr, data_trimmed);
 
-    // Create the output directory if it does not exist
+    <span class="comment">// Create the output directory if it does not exist
     </span>create_dir_all(OUTPUT_DIR)
         .<span class="kw">await
         </span>.expect(<span class="string">"Failed to create output directory"</span>);
 
     <span class="comment">// Save the data to a file
-    // let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
-    // let mut file = File::create(&amp;filepath)
-    //     .await
-    //     .expect("Failed to create test file");
-    // file.write_all(&amp;data)
-    //     .await
-    //     .expect("Failed to write to file");
-    //
-    // info!("Data saved to: {}", filepath);
+    </span><span class="kw">let </span>filepath = <span class="macro">format!</span>(<span class="string">"{}/client_{}.txt"</span>, OUTPUT_DIR, addr);
+    <span class="kw">let </span><span class="kw-2">mut </span>file = File::create(<span class="kw-2">&amp;</span>filepath)
+        .<span class="kw">await
+        </span>.expect(<span class="string">"Failed to create test file"</span>);
+    file.write_all(<span class="kw-2">&amp;</span>data)
+        .<span class="kw">await
+        </span>.expect(<span class="string">"Failed to write to file"</span>);
 
-    // Check if the client requested server shutdown
+    <span class="macro">info!</span>(<span class="string">"Data saved to: {}"</span>, filepath);
+
+    <span class="comment">// Check if the client requested server shutdown
     </span><span class="kw">if </span>data_trimmed == <span class="string">"shutdown" </span>{
         <span class="prelude-val">Ok</span>(<span class="string">"true"</span>)
     } <span class="kw">else </span>{

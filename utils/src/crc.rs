@@ -1,3 +1,6 @@
+//! CRC-16 CCITT implementation.
+//! This module provides an implementation of the CRC-16 CCITT checksum algorithm.
+
 /// CRC-16 CCITT implementation.
 pub type PolynomialSize = u16;
 /// CRC-16 CCITT polynomial in hex form.

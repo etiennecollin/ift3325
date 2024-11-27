@@ -1,3 +1,5 @@
+//! Contains the functions to manage the IO tasks.
+
 use crate::{
     frame::{Frame, FrameType},
     frame_handlers::*,

@@ -1,3 +1,10 @@
+//! The frame module contains the Frame struct, the FrameType enum and the
+//! FrameError enum.
+//!
+//! The Frame struct represents a frame in the HDLC protocol.
+//! The FrameType enum represents the type of a frame.
+//! The FrameError enum represents an error that may occur when working with frames.
+
 use crate::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
     crc::{crc_16_ccitt, PolynomialSize},

@@ -1,3 +1,5 @@
+//! Contains miscellaneous helper functions.
+
 use tokio::task::JoinHandle;
 
 /// Flattens the result of a join handle.

@@ -1,3 +1,5 @@
+//! Contains utilities that are used throughout the program.
+
 pub mod byte_stuffing;
 pub mod crc;
 pub mod frame;

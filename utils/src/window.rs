@@ -1,6 +1,7 @@
-use log::debug;
+//! A sliding window for the HDLC protocol.
 
 use crate::frame::Frame;
+use log::debug;
 use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},

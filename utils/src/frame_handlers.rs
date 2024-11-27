@@ -1,11 +1,15 @@
-use log::{info, warn};
-use tokio::sync::mpsc::Sender;
+//! Frame handlers for the receiver.
+//!
+//! Each handler is responsible for handling a specific frame type and
+//! returning a boolean indicating if the connection should be terminated.
 
 use crate::{
     frame::{Frame, FrameType},
     io::create_frame_timer,
     window::{SafeCond, SafeWindow, Window},
 };
+use log::{info, warn};
+use tokio::sync::mpsc::Sender;
 
 /// Handles the receive ready frames.
 ///

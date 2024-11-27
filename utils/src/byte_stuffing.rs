@@ -1,3 +1,12 @@
+//! Provides functions to perform byte stuffing on frame bytes.
+//!
+//! Byte stuffing is done to avoid the byte being interpreted as a flag.
+//!
+//! How it works:
+//! - If a byte is equal to a flag, the escape flag is added before the byte
+//!   and the byte has its 5th bit flipped.
+//! - Boundary flags are added at the start and end of the frame.
+
 use crate::frame::{Frame, FrameError};
 
 /// Perform byte stuffing on the given frame bytes.

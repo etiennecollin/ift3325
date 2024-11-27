@@ -137,22 +137,15 @@ pub async fn handle_reception(
     assembler_tx: Option<&mpsc::Sender<Vec<u8>>>,
     expected_info_num: &mut u8,
 ) -> bool {
-    // Check if the frame is an acknowledgment or a rejection
     let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
 
     match frame.frame_type.into() {
-        // If it is an acknowledgment, pop the acknowledged frames from the window
         FrameType::ReceiveReady => handle_receive_ready(safe_window, &frame, condition),
-
-        // If it is a connection end frame, return true to stop the connection
         FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx, condition).await,
-
         FrameType::ConnectionStart => {
             handle_connection_start(safe_window, &frame, writer_tx, condition).await
         }
-
         FrameType::Reject => handle_reject(safe_window, &frame, writer_tx, condition).await,
-
         FrameType::Information => {
             let assembler_tx = assembler_tx.expect("No sender provided to handle frame reassembly");
             handle_information(
@@ -165,7 +158,6 @@ pub async fn handle_reception(
             )
             .await
         }
-
         FrameType::P => handle_p(writer_tx, expected_info_num).await,
         FrameType::Unknown => false,
     }

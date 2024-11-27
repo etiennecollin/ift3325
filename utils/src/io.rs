@@ -64,6 +64,11 @@ pub fn reader(
             for byte in buf[..read_length].iter() {
                 // Check if the byte starts or ends a frame
                 if *byte == Frame::BOUNDARY_FLAG {
+                    if frame_buf.is_empty() {
+                        frame_buf.clear();
+                        continue;
+                    }
+
                     // Create frame from buffer
                     let frame = match Frame::from_bytes(&frame_buf) {
                         Ok(frame) => frame,

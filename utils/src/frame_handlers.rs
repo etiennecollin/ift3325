@@ -152,11 +152,13 @@ pub async fn handle_reject(
         let srej = window.srej;
 
         // Pop the implicitly acknowledged frames from the window
-        window.pop_until(
+        let popped_num = window.pop_until(
             (frame.num + (Window::MAX_FRAME_NUM - 1)) % Window::MAX_FRAME_NUM,
             true,
             condition,
         );
+
+        debug!("Popped {} frames", popped_num);
 
         // Select the frames to be resent
         if srej {
@@ -186,8 +188,12 @@ pub async fn handle_reject(
         frames.iter().map(|(num, _)| num).collect::<Vec<&u8>>()
     );
     for (_, frame) in frames {
+        //FIXME: Seems like there is a deadlock here. I never reach the debug
+        // statement after the loop. It also prevents the timers from sending
+        // data to the writer.
         writer_tx.send(frame).await.expect("Failed to resend frame");
     }
+    debug!("Resent reject frames");
 
     false
 }

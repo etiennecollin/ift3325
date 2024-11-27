@@ -42,6 +42,7 @@ pub fn reader(
         let mut next_info_frame_num: u8 = 0;
 
         loop {
+            debug!("Reader locking window");
             if window
                 .lock()
                 .expect("Failed to lock window")
@@ -50,6 +51,7 @@ pub fn reader(
                 return Ok("Reader task ended, sent disconnect request");
             }
 
+            debug!("Reader waiting for data");
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
             let read_length = match stream.read(&mut buf).await {
@@ -59,6 +61,7 @@ pub fn reader(
                     return Err("Connection ended with an error");
                 }
             };
+            debug!("Reader received {} bytes", read_length);
 
             // Iterate over the received bytes
             for byte in buf[..read_length].iter() {
@@ -92,6 +95,8 @@ pub fn reader(
                     {
                         return Ok("Connection ended by server");
                     }
+
+                    debug!("Reader finished handling frame");
 
                     // Reset buffer
                     frame_buf.clear();

@@ -236,11 +236,9 @@ async fn send_file(
             frame_bytes = frame.to_bytes();
 
             // Wait for the window to have space
-            while window.is_full() {
-                window = condition
-                    .wait(window)
-                    .expect("Failed to wait for condition");
-            }
+            window = condition
+                .wait_while(window, |window| window.is_full())
+                .expect("Failed to wait for condition");
 
             // Push the frame to the window
             window

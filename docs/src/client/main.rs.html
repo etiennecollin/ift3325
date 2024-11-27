@@ -343,6 +343,8 @@
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
 <a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple TCP client for sending files to a server.
 //!
 //! This client connects to a specified TCP server and sends the contents
@@ -350,14 +352,16 @@
 //! during the execution of the program.
 //!
 //! ## Usage
-//! To run the client, specify the server address, port number, file path, and a placeholder argument:
+//! To run the client, specify the server address, port number, file path, and
+//! a placeholder argument:
 //!
 //! ```bash
 //! cargo run -- &lt;address&gt; &lt;port&gt; &lt;file_path&gt; &lt;go_back_n&gt;
 //! ```
 //!
-//! Replace `&lt;address&gt;` with the server's IP address (e.g., 127.0.0.1), `&lt;port&gt;` with the desired port number,
-//! and `&lt;file_path&gt;` with the path to the file you want to send.
+//! Replace `&lt;address&gt;` with the server's IP address (e.g., 127.0.0.1),
+//! `&lt;port&gt;` with the desired port number, and `&lt;file_path&gt;` with the path to
+//! the file you want to send.
 
 </span><span class="kw">use </span>env_logger::TimestampPrecision;
 <span class="kw">use </span>log::{error, info};
@@ -372,7 +376,8 @@
 <span class="kw">use </span>tokio::{net::TcpStream, sync::mpsc};
 <span class="kw">use </span>utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, flatten, reader, writer},
+    io::{connection_request, create_frame_timer, reader, writer},
+    misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
 
@@ -380,10 +385,6 @@
 ///
 /// This function sets up logging, processes command-line arguments to extract the server address,
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
-///
-/// # Panics
-/// This function will exit the process with an error message if the arguments are incorrect,
-/// if the port number is invalid, or if the address format is invalid.
 </span><span class="attr">#[tokio::main]
 </span><span class="kw">async fn </span>main() {
     <span class="comment">// Initialize the logger
@@ -521,19 +522,22 @@
 <span class="doccomment">/// Sends a file to the specified server address.
 ///
 /// This function opens the specified file, reads it and sends it over the
-/// established TCP connection.
+/// established TCP connection chunk by chunk. It creates a new frame for each
+/// chunk and sends it to the server. The function also handles resending frames
+/// in case of a timeout.
 ///
 /// # Arguments
-/// * `tx` - The sender channel to send the frame to the writer task.
-/// * `safe_window` - The window to manage the frames.
-/// * `condition` - The condition to signal tasks that space is available in the window.
-/// * `file_path` - The path to the file to be sent.
+/// - `tx` - The sender channel to send the frame to the writer task.
+/// - `safe_window` - The window to manage the frames.
+/// - `condition` - The condition to signal tasks that space is available in the window.
+/// - `file_path` - The path to the file to be sent.
 ///
 /// # Panics
-/// This function will exit the process with an error message if any of the following fails:
-/// - Opening the file
-/// - Reading the file contents
-/// - Sending the file contents to the server
+/// This function will panic if:
+/// - The window mutex cannot be locked.
+/// - The condition cannot be waited on.
+/// - The frame cannot be pushed to the window.
+/// - The frame cannot be sent to the writer task.
 </span><span class="kw">async fn </span>send_file(
     tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     safe_window: SafeWindow,
@@ -560,9 +564,9 @@
     }
 
     <span class="comment">// Read the file in chunks and create the frames to be sent
-    </span><span class="kw">for </span>(i, chunk) <span class="kw">in </span>buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
+    </span><span class="kw">let </span><span class="kw-2">mut </span>num: u8;
+    <span class="kw">for </span>(i, chunk) <span class="kw">in </span>buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
         <span class="kw">let </span>frame_bytes: Vec&lt;u8&gt;;
-        <span class="kw">let </span>num: u8;
 
         <span class="comment">// Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
         </span>{

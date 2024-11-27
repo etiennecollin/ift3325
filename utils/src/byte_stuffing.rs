@@ -1,3 +1,12 @@
+//! Provides functions to perform byte stuffing on frame bytes.
+//!
+//! Byte stuffing is done to avoid the byte being interpreted as a flag.
+//!
+//! How it works:
+//! - If a byte is equal to a flag, the escape flag is added before the byte
+//!   and the byte has its 5th bit flipped.
+//! - Boundary flags are added at the start and end of the frame.
+
 use crate::frame::{Frame, FrameError};
 
 /// Perform byte stuffing on the given frame bytes.
@@ -27,10 +36,6 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 ///
 /// This function removes the byte stuffing from the given frame bytes and
 /// returns the original frame bytes.
-///
-/// # Errors
-/// - If an abort sequence is detected
-/// - If the destuffing process fails because the frame is not properly formatted or incomplete
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 
@@ -77,7 +82,7 @@ mod tests {
                 Frame::BOUNDARY_FLAG,
             ]
         );
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -94,7 +99,7 @@ mod tests {
         let stuffed_data = byte_stuffing(&data);
         let expected_stuffed_data = [Frame::BOUNDARY_FLAG, 0xFF, Frame::BOUNDARY_FLAG];
         assert_eq!(stuffed_data, expected_stuffed_data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -110,7 +115,7 @@ mod tests {
             Frame::BOUNDARY_FLAG,
         ];
         let stuffed_data = byte_stuffing(&data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 
@@ -118,7 +123,7 @@ mod tests {
     fn byte_stuffing_empty_test() {
         let data = [];
         let stuffed_data = byte_stuffing(&data);
-        let destuffed_data = byte_destuffing(&stuffed_data).unwrap();
+        let destuffed_data = byte_destuffing(&stuffed_data[1..stuffed_data.len() - 1]).unwrap();
         assert_eq!(destuffed_data, data);
     }
 }

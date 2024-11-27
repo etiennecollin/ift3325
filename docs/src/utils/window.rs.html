@@ -131,16 +131,33 @@
 <a href="#131" id="131">131</a>
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>log::debug;
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A sliding window for the HDLC protocol.
 
-<span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
+</span><span class="kw">use </span><span class="kw">crate</span>::frame::Frame;
+<span class="kw">use </span>log::debug;
 <span class="kw">use </span>std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},
 };
 
-<span class="kw">pub type </span>SafeWindow = Arc&lt;Mutex&lt;Window&gt;&gt;;
-<span class="kw">pub type </span>SafeCond = Arc&lt;Condvar&gt;;
+<span class="doccomment">/// Type alias for a safe window that can be shared and mutated between threads
+</span><span class="kw">pub type </span>SafeWindow = Arc&lt;Mutex&lt;Window&gt;&gt;;
+<span class="doccomment">/// Type alias for a condition variable that can be safely shared between threads
+</span><span class="kw">pub type </span>SafeCond = Arc&lt;Condvar&gt;;
 
 <span class="comment">// Define the error type for the window
 </span><span class="attr">#[derive(Debug)]
@@ -152,11 +169,16 @@
 <span class="doccomment">/// A sliding window for a Go-Back-N protocol.
 /// It implements a deque with a maximum size of `WINDOW_SIZE`.
 </span><span class="kw">pub struct </span>Window {
-    <span class="kw">pub </span>frames: VecDeque&lt;Frame&gt;,
-    <span class="kw">pub </span>resend_all: bool,
-    <span class="kw">pub </span>is_connected: bool,
-    <span class="kw">pub </span>srej: bool,
-    <span class="kw">pub </span>waiting_disconnect: bool,
+    <span class="doccomment">/// The frames in the window
+    </span><span class="kw">pub </span>frames: VecDeque&lt;Frame&gt;,
+    <span class="doccomment">/// Flag to resend all frames in the window
+    </span><span class="kw">pub </span>resend_all: bool,
+    <span class="doccomment">/// Flag to indicate if the connection is established
+    </span><span class="kw">pub </span>is_connected: bool,
+    <span class="doccomment">/// Flag to indicate if the window is using the selective reject protocol
+    </span><span class="kw">pub </span>srej: bool,
+    <span class="doccomment">/// Flag to indicate if a disconnect request was sent
+    </span><span class="kw">pub </span>sent_disconnect_request: bool,
 }
 
 <span class="kw">impl </span>Window {
@@ -179,12 +201,12 @@
             resend_all: <span class="bool-val">false</span>,
             is_connected: <span class="bool-val">false</span>,
             srej: <span class="bool-val">false</span>,
-            waiting_disconnect: <span class="bool-val">false</span>,
+            sent_disconnect_request: <span class="bool-val">false</span>,
         }
     }
 
     <span class="doccomment">/// Get the maximum number of frames that can be in the window
-    </span><span class="kw">pub fn </span>get_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    </span><span class="kw">pub fn </span>get_max_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">if </span><span class="self">self</span>.srej {
             <span class="self">Self</span>::SIZE_SREJ
         } <span class="kw">else </span>{
@@ -193,8 +215,9 @@
     }
 
     <span class="doccomment">/// Push a frame to the back of the window
+    /// If the window is full, an error is returned
     </span><span class="kw">pub fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), WindowError&gt; {
-        <span class="kw">if </span><span class="self">self</span>.frames.len() == <span class="self">self</span>.get_size() {
+        <span class="kw">if </span><span class="self">self</span>.frames.len() == <span class="self">self</span>.get_max_size() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(WindowError::Full);
         } <span class="kw">else </span>{
             <span class="self">self</span>.frames.push_back(frame);
@@ -217,7 +240,7 @@
 
     <span class="doccomment">/// Check if the window is full
     </span><span class="kw">pub fn </span>is_full(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.frames.len() == <span class="self">self</span>.get_size()
+        <span class="self">self</span>.frames.len() == <span class="self">self</span>.get_max_size()
     }
 
     <span class="doccomment">/// Check if the window contains a frame with the given number
@@ -230,7 +253,12 @@
         <span class="self">self</span>.frames.is_empty()
     }
 
-    <span class="doccomment">/// Pop frames from the front of the window until the frame with the given number is reached
+    <span class="doccomment">/// Pop frames from the front of the window until the frame with the given number is reached.
+    ///
+    /// # Arguments
+    /// - `num`: The number of the frame to pop until
+    /// - `inclusive`: If true, the frame with the given number is also popped
+    /// - `condition`: The condition variable to notify the send task
     </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, inclusive: bool, condition: <span class="kw-2">&amp;</span>SafeCond) -&gt; usize {
         <span class="kw">let </span>initial_len = <span class="self">self</span>.frames.len();
 

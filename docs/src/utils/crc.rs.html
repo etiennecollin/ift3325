@@ -73,14 +73,34 @@
 <a href="#73" id="73">73</a>
 <a href="#74" id="74">74</a>
 <a href="#75" id="75">75</a>
-</pre></div><pre class="rust"><code><span class="kw">type </span>PolynomialSize = u16;
-<span class="kw">const </span>POLYNOMIAL: PolynomialSize = <span class="number">0x1021</span>;
-<span class="kw">const </span>POLYNOMIAL_WIDTH: usize = <span class="number">16</span>;
-<span class="kw">const </span>MSB: PolynomialSize = <span class="number">1 </span>&lt;&lt; (POLYNOMIAL_WIDTH - <span class="number">1</span>);
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! CRC-16 CCITT implementation.
+//! This module provides an implementation of the CRC-16 CCITT checksum algorithm.
+
+/// CRC-16 CCITT implementation.
+</span><span class="kw">pub type </span>PolynomialSize = u16;
+<span class="doccomment">/// CRC-16 CCITT polynomial in hex form.
+</span><span class="kw">const </span>POLYNOMIAL: PolynomialSize = <span class="number">0x1021</span>;
+<span class="doccomment">/// Degree of the polynomial.
+</span><span class="kw">const </span>POLYNOMIAL_WIDTH: usize = <span class="number">16</span>;
+<span class="doccomment">/// Most significant bit of the polynomial.
+</span><span class="kw">const </span>MSB: PolynomialSize = <span class="number">1 </span>&lt;&lt; (POLYNOMIAL_WIDTH - <span class="number">1</span>);
 <span class="comment">// const INITIAL_VALUE: PolynomialSize = PolynomialSize::MAX;
+</span><span class="doccomment">/// Initial value for the CRC-16 algorithm.
 </span><span class="kw">const </span>INITIAL_VALUE: PolynomialSize = <span class="number">0</span>;
-<span class="kw">const </span>FINAL_XOR: PolynomialSize = <span class="number">0</span>;
-<span class="kw">const </span>LUT: [PolynomialSize; <span class="number">256</span>] = lookup_table();
+<span class="doccomment">/// Final XOR value for the CRC-16 algorithm.
+</span><span class="kw">const </span>FINAL_XOR: PolynomialSize = <span class="number">0</span>;
+<span class="doccomment">/// Lookup table for the CRC-16 algorithm.
+</span><span class="kw">const </span>LUT: [PolynomialSize; <span class="number">256</span>] = lookup_table();
 
 <span class="doccomment">/// Generate a lookup table for the CRC-16 algorithm.
 /// The table is an array of 256 elements, each element representing the

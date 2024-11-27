@@ -1,6 +1,13 @@
+//! The frame module contains the Frame struct, the FrameType enum and the
+//! FrameError enum.
+//!
+//! The Frame struct represents a frame in the HDLC protocol.
+//! The FrameType enum represents the type of a frame.
+//! The FrameError enum represents an error that may occur when working with frames.
+
 use crate::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
-    crc::crc_16_ccitt,
+    crc::{crc_16_ccitt, PolynomialSize},
 };
 
 /// An error that may occur when working with frames.
@@ -9,7 +16,8 @@ use crate::{
 /// - InvalidFCS: The FCS does not match the CRC
 /// - InvalidLength: The frame is too short
 /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
-/// - ByteDestuffingError: An error occurred during byte destuffing
+/// - AbortSequenceReceived: An abort sequence was received during byte destuffing
+/// - DestuffingError: An error occurred during byte destuffing
 #[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
@@ -23,6 +31,7 @@ pub enum FrameError {
 /// The type of a frame.
 /// The frame type is encoded as a single byte.
 #[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FrameType {
     /// Contains data to be transmitted
     Information = b'I',
@@ -33,7 +42,7 @@ pub enum FrameType {
     /// Requests immediate retransmission of data
     Reject = b'R',
     /// Indicates that the sender has finished sending data
-    ConnexionEnd = b'F',
+    ConnectionEnd = b'F',
     /// Forces the receiver to send a response
     P = b'P',
     /// Unknown frame type
@@ -48,7 +57,7 @@ impl From<u8> for FrameType {
             b'C' => FrameType::ConnectionStart,
             b'A' => FrameType::ReceiveReady,
             b'R' => FrameType::Reject,
-            b'F' => FrameType::ConnexionEnd,
+            b'F' => FrameType::ConnectionEnd,
             b'P' => FrameType::P,
             _ => FrameType::Unknown,
         }
@@ -75,7 +84,7 @@ pub struct Frame {
     pub data: Vec<u8>,
 
     /// The CRC-16 checksum stored in native endianess
-    fcs: Option<u16>,
+    fcs: Option<PolynomialSize>,
 
     /// The raw bytes of the frame before byte stuffing
     /// The frame is encoded as follows:
@@ -188,33 +197,16 @@ impl Frame {
     /// Create a new frame from the given bytes.
     ///
     /// The frame is decoded as follows:
-    /// - 1 byte: boundary flag
     /// - Content
     ///    - 1 byte: frame_type
     ///    - 1 byte: num
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
-    /// - 1 byte: boundary flag
-    ///
-    /// # Errors
-    ///
-    /// The following errors may occur:
-    /// - InvalidFrameType: The frame type is invalid
-    /// - InvalidFCS: The FCS does not match the CRC
-    /// - InvalidLength: The frame is too short
-    /// - MissingBoundaryFlag: The frame does not start and end with a boundary flag
-    ///
-    /// If there is a checksum error, the number of the frame is wrapped in the error.
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
-        // The frame should contain at least 6 bytes: 2 boundary flags, 1 frame_type, 1 num, 2 FCS
+        // The frame should contain at least 4 bytes: 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 4 {
             return Err(FrameError::InvalidLength(bytes.len()));
         }
-
-        // The frame should start with a boundary flag
-        // if bytes[0] != Frame::BOUNDARY_FLAG || bytes[bytes.len() - 1] != Frame::BOUNDARY_FLAG {
-        //     return Err(FrameError::MissingBoundaryFlag);
-        // }
 
         // Destuff the frame content
         let content = byte_destuffing(bytes)?;
@@ -349,41 +341,37 @@ mod tests {
     #[test]
     fn bytes_to_frame_conversion_test() {
         let bytes: &[u8] = &[
-            0x7E,
             FrameType::ConnectionStart.into(),
-            0x02,
+            0x00,
             0x03,
             0x04,
-            0x8E,
-            0xF7,
-            0x7E,
+            0xE0,
+            0x97,
         ];
         let frame = Frame::from_bytes(bytes);
 
         // Check that the frame is correct
         assert!(frame.is_ok());
         let frame = frame.unwrap();
-        assert_eq!(frame.frame_type, bytes[1]);
-        assert_eq!(frame.num, bytes[2]);
-        assert_eq!(frame.data, bytes[3..bytes.len() - 3].to_vec());
-        assert_eq!(frame.fcs.unwrap(), 0x8EF7);
-        assert_eq!(frame.content.unwrap(), bytes[1..bytes.len() - 1].to_vec());
+        assert_eq!(frame.frame_type, bytes[0]);
+        assert_eq!(frame.num, bytes[1]);
+        assert_eq!(frame.data, bytes[2..bytes.len() - 2].to_vec());
+        assert_eq!(frame.fcs.unwrap(), 0xE097);
+        assert_eq!(frame.content.unwrap(), bytes.to_vec());
         assert_eq!(frame.content_stuffed.unwrap(), bytes);
     }
 
     #[test]
     fn frame_empty_data_test() {
-        let frame = Frame::new(FrameType::ConnectionStart, 0x02, vec![]);
+        let frame = Frame::new(FrameType::ConnectionStart, 0x00, vec![]);
         let bytes = frame.to_bytes();
 
-        println!("Bytes RAW: {:X?}", bytes);
-
         // Set the expected values
-        let expected_fcs = 0x78DDu16;
+        let expected_fcs = 0x589Fu16;
         let mut expected_bytes = vec![
             Frame::BOUNDARY_FLAG,
             FrameType::ConnectionStart.into(),
-            0x02,
+            0x00,
         ];
         expected_bytes.extend_from_slice(&expected_fcs.to_be_bytes());
         expected_bytes.push(Frame::BOUNDARY_FLAG);
@@ -397,7 +385,7 @@ mod tests {
         assert_eq!(bytes, expected_bytes);
 
         // Decode the frame from the bytes
-        let frame = Frame::from_bytes(&bytes);
+        let frame = Frame::from_bytes(&bytes[1..expected_bytes.len() - 1]);
 
         // Check that the frame is correct
         assert!(frame.is_ok());
@@ -410,6 +398,9 @@ mod tests {
             frame.content.unwrap(),
             expected_bytes[1..expected_bytes.len() - 1]
         );
-        assert_eq!(frame.content_stuffed.unwrap(), bytes);
+        assert_eq!(
+            frame.content_stuffed.unwrap(),
+            bytes[1..expected_bytes.len() - 1]
+        );
     }
 }

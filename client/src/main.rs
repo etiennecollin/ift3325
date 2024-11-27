@@ -29,7 +29,7 @@ use std::{
 use tokio::{net::TcpStream, sync::mpsc};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, reader, writer},
+    io::{connection_request, reader, writer},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
@@ -40,6 +40,8 @@ use utils::{
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
 #[tokio::main]
 async fn main() {
+    // Tokio task debugger
+    console_subscriber::init();
     // Initialize the logger
     env_logger::builder()
         .format_module_path(false)
@@ -242,7 +244,7 @@ async fn send_file(
 
             // Push the frame to the window
             window
-                .push(frame)
+                .push(frame, tx.clone())
                 .expect("Failed to push frame to window, this should never happen");
         }
 
@@ -251,11 +253,6 @@ async fn send_file(
             .expect("Failed to send frame to writer task");
 
         info!("Sent frame {}", num);
-
-        // Run a timer to resend the frame if it is not acknowledged
-        let tx_clone = tx.clone();
-        let safe_window_clone = safe_window.clone();
-        create_frame_timer(safe_window_clone, num, tx_clone);
     }
 
     // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped

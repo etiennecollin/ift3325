@@ -5,10 +5,9 @@
 
 use crate::{
     frame::{Frame, FrameType},
-    io::create_frame_timer,
     window::{SafeCond, SafeWindow, Window},
 };
-use log::{info, warn};
+use log::{debug, info, warn};
 use tokio::sync::mpsc::Sender;
 
 /// Handles the receive ready frames.
@@ -144,6 +143,10 @@ pub async fn handle_reject(
 
         // Ignore the frame if the connection is not established
         if !window.is_connected {
+            debug!(
+                "Received REJ for frame {} but connection is not established",
+                frame.num
+            );
             return false;
         }
         let srej = window.srej;
@@ -157,22 +160,21 @@ pub async fn handle_reject(
 
         // Select the frames to be resent
         if srej {
-            // Select the frame to resend
             let selected_frame = window
                 .frames
                 .iter()
-                .find(|f| f.num == frame.num)
+                .find(|(f, _)| f.num == frame.num)
                 .expect("Frame not found in window, this should never happen")
+                .0
                 .to_bytes();
 
             frames = vec![(frame.num, selected_frame)];
             warn!("Received SREJ for frame {}", frame.num);
         } else {
-            // Select all frames to be resent
             frames = window
                 .frames
                 .iter()
-                .map(|frame| (frame.num, frame.to_bytes()))
+                .map(|(frame, _)| (frame.num, frame.to_bytes()))
                 .collect();
             warn!("Received REJ for frame {}", frame.num);
         }
@@ -258,30 +260,31 @@ pub async fn handle_dropped_frame(
         "Dropped frame detected - Received: {}, Expected: {}",
         frame.num, expected_info_num
     );
+    let rej_frame_bytes;
 
-    let rej_frame = Frame::new(FrameType::Reject, *expected_info_num, Vec::new());
-    let rej_frame_bytes = rej_frame.to_bytes();
-
-    // Create a scope for the mutex lock
+    // If window is full, ignore frame
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
-        // If window is full, ignore frame
         if window.is_full() || window.contains(*expected_info_num) {
+            debug!("Window is full or contains frame, ignoring");
             return false;
         }
-        window
-            .push(rej_frame)
-            .expect("Failed to push frame to window");
+
+        // Create a reject frame for the dropped frame
+        let rej_frame = Frame::new(FrameType::Reject, *expected_info_num, Vec::new());
+        rej_frame_bytes = rej_frame.to_bytes();
+
+        if window.push(rej_frame, writer_tx.clone()).is_err() {
+            debug!("Failed to push reject frame to window, ignoring");
+            return false;
+        }
     }
 
     // Send a reject frame
     writer_tx
-        .send(rej_frame_bytes)
+        .send(rej_frame_bytes.clone())
         .await
         .expect("Failed to send reject frame");
-
-    // Run a timer to resend the frame if it is not received
-    create_frame_timer(safe_window.clone(), *expected_info_num, writer_tx.clone());
 
     info!("Sent reject for frame {}", expected_info_num);
     false

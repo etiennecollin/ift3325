@@ -5,6 +5,8 @@
 //! The FrameType enum represents the type of a frame.
 //! The FrameError enum represents an error that may occur when working with frames.
 
+use log::debug;
+
 use crate::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
     crc::{crc_16_ccitt, PolynomialSize},
@@ -203,6 +205,7 @@ impl Frame {
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
+        debug!("Decoding frame from bytes: {:X?}", bytes);
         // The frame should contain at least 4 bytes: 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 4 {
             return Err(FrameError::InvalidLength(bytes.len()));
@@ -210,6 +213,8 @@ impl Frame {
 
         // Destuff the frame content
         let content = byte_destuffing(bytes)?;
+
+        debug!("Destuffed frame content: {:X?}", content);
 
         // Extract the frame information
         let frame_type = content[0];
@@ -228,7 +233,7 @@ impl Frame {
             return Err(FrameError::InvalidFCS(fcs));
         }
 
-        // Create the frame contenta
+        // Create the frame content
         let frame_type = match FrameType::from(frame_type) {
             FrameType::Unknown => return Err(FrameError::InvalidFrameType(frame_type)),
             frame_type => frame_type,

@@ -17,7 +17,7 @@
 //! the file you want to send.
 
 use env_logger::TimestampPrecision;
-use log::{error, info};
+use log::{debug, error, info};
 use std::{
     env,
     fs::File,
@@ -26,10 +26,10 @@ use std::{
     process::exit,
     sync::{Arc, Condvar, Mutex},
 };
-use tokio::{net::TcpStream, sync::mpsc};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, reader, writer},
+    io::{connection_request, reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
@@ -38,7 +38,7 @@ use utils::{
 ///
 /// This function sets up logging, processes command-line arguments to extract the server address,
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
     // Tokio task debugger
     console_subscriber::init();
@@ -126,7 +126,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
     let window = Arc::new(Mutex::new(Window::new()));
@@ -200,7 +200,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
 async fn send_file(
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
     condition: SafeCond,
     file_path: String,
@@ -252,7 +252,9 @@ async fn send_file(
                 .expect("Failed to push frame to window, this should never happen");
         }
 
+        // Send the frame to the writer tas
         tx.send(frame_bytes)
+            .await
             .expect("Failed to send frame to writer task");
 
         info!("Sent frame {}", num);
@@ -263,6 +265,14 @@ async fn send_file(
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
         while !window.is_empty() {
+            debug!(
+                "Window: {:X?}",
+                window
+                    .frames
+                    .iter()
+                    .map(|(f, t)| (f.num, t))
+                    .collect::<Vec<(u8, &JoinHandle<()>)>>()
+            );
             window = condition
                 .wait(window)
                 .expect("Failed to wait for condition");

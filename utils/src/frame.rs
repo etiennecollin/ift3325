@@ -5,8 +5,6 @@
 //! The FrameType enum represents the type of a frame.
 //! The FrameError enum represents an error that may occur when working with frames.
 
-use log::debug;
-
 use crate::{
     byte_stuffing::{byte_destuffing, byte_stuffing},
     crc::{crc_16_ccitt, PolynomialSize},
@@ -108,8 +106,8 @@ impl Frame {
     /// Replace an escaped byte by computing the XOR between the byte and this byte
     pub const REPLACEMENT_POSITION: u8 = 0x20;
     /// The maximum size of the data field in bytes
-    pub const MAX_SIZE_DATA: usize = 64; // 64kB
-                                         // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
+    // pub const MAX_SIZE_DATA: usize = 64; // 64B
+    pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     /// The size of a frame in bytes
     ///

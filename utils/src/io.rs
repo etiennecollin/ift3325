@@ -59,16 +59,13 @@ pub fn reader(
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
             let read_length = match stream.read(&mut buf).await {
+                Ok(0) => return Ok("Connection ended"),
                 Ok(read_length) => read_length,
                 Err(e) => {
                     error!("Failed to read from stream: {}", e);
                     return Err("Connection ended with an error");
                 }
             };
-
-            if read_length == 0 {
-                return Ok("Connection ended");
-            }
             debug!("Reader received {} bytes", read_length);
 
             // Iterate over the received bytes
@@ -77,7 +74,6 @@ pub fn reader(
                 if *byte == Frame::BOUNDARY_FLAG {
                     if frame_buf.is_empty() {
                         debug!("Empty frame buffer");
-                        frame_buf.clear();
                         continue;
                     }
 

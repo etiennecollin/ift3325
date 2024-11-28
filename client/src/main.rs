@@ -168,9 +168,9 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     // Wait for all data to be transmitted
     match tokio::try_join!(flatten(reader), flatten(writer), flatten(sender)) {
         Ok((v1, v2, v3)) => {
-            error!("{}", v1);
-            error!("{}", v2);
-            error!("{}", v3);
+            info!("{}", v1);
+            info!("{}", v2);
+            info!("{}", v3);
         }
         Err(e) => error!("Error: {:?}", e),
     };

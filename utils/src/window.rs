@@ -6,7 +6,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},
 };
-use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 /// Type alias for a safe window that can be shared and mutated between threads.
 pub type SafeWindow = Arc<Mutex<Window>>;
@@ -79,11 +79,7 @@ impl Window {
     ///
     /// # Errors
     /// If the window is full, an error is returned
-    pub fn push(
-        &mut self,
-        frame: Frame,
-        writer_tx: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), WindowError> {
+    pub fn push(&mut self, frame: Frame, writer_tx: Sender<Vec<u8>>) -> Result<(), WindowError> {
         if self.frames.len() == self.get_max_size() {
             return Err(WindowError::Full);
         } else {
@@ -98,18 +94,20 @@ impl Window {
     /// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    pub fn pop_front(&mut self, condition: SafeCond) -> Option<WindowElement> {
+    pub fn pop_front(&mut self, condition: SafeCond) -> Option<Frame> {
         let popped = self.frames.pop_front();
 
-        if let Some(popped) = &popped {
+        if let Some(popped) = popped {
             // Abort the timer task for the frame that was popped
             popped.1.abort();
 
             // Notify the send task that space was created in the window
             condition.notify_one();
+
+            return Some(popped.0);
         }
 
-        popped
+        None
     }
 
     /// Check if the window is full
@@ -135,7 +133,7 @@ impl Window {
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
-    pub fn pop(&mut self, num: u8, condition: SafeCond) -> Option<WindowElement> {
+    pub fn pop(&mut self, num: u8, condition: SafeCond) -> Option<Frame> {
         let i = self.frames.iter().position(|(frame, _)| frame.num == num);
         match i {
             Some(i) => {
@@ -148,7 +146,7 @@ impl Window {
                 popped.1.abort();
                 // Notify the send task that space was created in the window
                 condition.notify_one();
-                Some(popped)
+                Some(popped.0)
             }
             None => None,
         }
@@ -195,5 +193,70 @@ impl Window {
 impl Default for Window {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{Frame, FrameType};
+
+    #[tokio::test]
+    async fn test_push_and_pop() {
+        let mut window = Window::new();
+        let frame = Frame::new(FrameType::Information, 0, vec![1, 2, 3]);
+        let tx = tokio::sync::mpsc::channel(1).0;
+        assert!(window.push(frame, tx).is_ok());
+        assert_eq!(window.frames.len(), 1);
+
+        let popped_frame = window.pop_front(Arc::new(Condvar::new())).unwrap();
+        assert_eq!(popped_frame.data, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_window_full() {
+        let mut window = Window::new();
+        let tx = tokio::sync::mpsc::channel(1).0;
+        for i in 0..window.get_max_size() {
+            assert!(window
+                .push(
+                    Frame::new(FrameType::Information, i as u8, vec![]),
+                    tx.clone()
+                )
+                .is_ok());
+        }
+
+        assert!(window.is_full());
+        assert!(window
+            .push(Frame::new(FrameType::Information, 0, vec![]), tx)
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_contains() {
+        let mut window = Window::new();
+        let tx = tokio::sync::mpsc::channel(1).0;
+        let frame = Frame::new(FrameType::Information, 1, vec![]);
+        assert!(window.push(frame, tx).is_ok());
+        assert!(window.contains(1));
+        assert!(!window.contains(2));
+    }
+
+    #[tokio::test]
+    async fn test_pop_until() {
+        let mut window = Window::new();
+        let cond = Arc::new(Condvar::new());
+        let tx = tokio::sync::mpsc::channel(1).0;
+        for i in 0..3 {
+            window
+                .push(
+                    Frame::new(FrameType::Information, i as u8, vec![]),
+                    tx.clone(),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(window.pop_until(1, true, cond), 2);
+        assert_eq!(window.frames.len(), 1);
     }
 }

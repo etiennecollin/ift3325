@@ -28,11 +28,15 @@ use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
 };
-use utils::{frame::Frame, io::writer, misc::flatten};
+use utils::{
+    frame::Frame,
+    io::{writer, CHANNEL_CAPACITY},
+    misc::flatten,
+};
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -162,26 +166,26 @@ async fn handle_connection(
     drop_probability: f32,
     flip_probability: f32,
 ) {
-    let (client_tx, client_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let (server_tx, server_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (client_tx, client_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
+    let (server_tx, server_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Split streams
     let (client_read, client_write) = client_stream.into_split();
     let (server_read, server_write) = server_stream.into_split();
 
     // Generate writer tasks
-    let client_writer = writer(client_write, server_rx);
-    let server_writer = writer(server_write, client_rx);
+    let client_writer = writer(client_write, client_rx);
+    let server_writer = writer(server_write, server_rx);
 
     let client_handler = handle_client(
         client_read,
-        client_tx.clone(),
+        server_tx.clone(),
         drop_probability,
         flip_probability,
     );
     let server_handler = handle_server(
         server_read,
-        server_tx.clone(),
+        client_tx.clone(),
         drop_probability,
         flip_probability,
     );
@@ -208,7 +212,7 @@ async fn handle_connection(
 /// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_client(
     mut client_read: OwnedReadHalf,
-    server_tx: mpsc::UnboundedSender<Vec<u8>>,
+    server_tx: mpsc::Sender<Vec<u8>>,
     drop_probability: f32,
     flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
@@ -252,7 +256,10 @@ fn handle_client(
             // =====================================================================
             debug!("Sending frame to server");
             // Send the file contents to the server
-            server_tx.send(from_client.to_vec()).unwrap();
+            server_tx
+                .send(from_client[..read_length].to_vec())
+                .await
+                .unwrap();
         }
     })
 }
@@ -262,7 +269,7 @@ fn handle_client(
 /// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_server(
     mut server_read: OwnedReadHalf,
-    client_tx: mpsc::UnboundedSender<Vec<u8>>,
+    client_tx: mpsc::Sender<Vec<u8>>,
     drop_probability: f32,
     flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
@@ -305,7 +312,10 @@ fn handle_server(
             // Send the frame to client
             // =====================================================================
             debug!("Sending frame to client");
-            client_tx.send(from_server.to_vec()).unwrap();
+            client_tx
+                .send(from_server[..read_length].to_vec())
+                .await
+                .unwrap();
         }
     })
 }

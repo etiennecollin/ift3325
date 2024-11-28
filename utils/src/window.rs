@@ -195,3 +195,58 @@ impl Default for Window {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{Frame, FrameType};
+
+    #[test]
+    fn test_push_and_pop() {
+        let mut window = Window::new();
+        let frame = Frame::new(FrameType::Information, 0, vec![1, 2, 3]);
+        assert!(window.push(frame).is_ok());
+        assert_eq!(window.frames.len(), 1);
+
+        let popped_frame = window.pop_front(&Arc::new(Condvar::new())).unwrap();
+        assert_eq!(popped_frame.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_window_full() {
+        let mut window = Window::new();
+        for i in 0..window.get_max_size() {
+            assert!(window
+                .push(Frame::new(FrameType::Information, i as u8, vec![]))
+                .is_ok());
+        }
+
+        assert!(window.is_full());
+        assert!(window
+            .push(Frame::new(FrameType::Information, 0, vec![]))
+            .is_err());
+    }
+
+    #[test]
+    fn test_contains() {
+        let mut window = Window::new();
+        let frame = Frame::new(FrameType::Information, 1, vec![]);
+        assert!(window.push(frame).is_ok());
+        assert!(window.contains(1));
+        assert!(!window.contains(2));
+    }
+
+    #[test]
+    fn test_pop_until() {
+        let mut window = Window::new();
+        let cond = Arc::new(Condvar::new());
+        for i in 0..3 {
+            window
+                .push(Frame::new(FrameType::Information, i as u8, vec![]))
+                .unwrap();
+        }
+
+        assert_eq!(window.pop_until(1, true, &cond), 2);
+        assert_eq!(window.frames.len(), 1);
+    }
+}

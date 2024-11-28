@@ -127,10 +127,10 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
     let reader = reader(

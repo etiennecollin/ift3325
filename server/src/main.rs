@@ -31,7 +31,7 @@ use tokio::{
 use utils::{
     io::{reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
-    window::Window,
+    window::{SafeCond, SafeWindow, Window},
 };
 
 const OUTPUT_DIR: &str = "./output";
@@ -132,10 +132,10 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
     let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
     let reader = reader(

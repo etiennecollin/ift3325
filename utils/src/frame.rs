@@ -72,7 +72,7 @@ impl From<FrameType> for u8 {
 }
 
 /// A frame for the HDLC protocol.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Frame {
     /// The frame_type of the frame
     pub frame_type: u8,

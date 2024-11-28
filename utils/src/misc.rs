@@ -11,3 +11,34 @@ pub async fn flatten<T>(handle: JoinHandle<Result<T, &'static str>>) -> Result<T
         Err(_) => Err("Handling failed"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::task;
+
+    #[tokio::test]
+    async fn test_flatten_ok() {
+        let handle = task::spawn(async { Ok::<_, &'static str>("Success") });
+        let result = flatten(handle).await;
+        assert_eq!(result, Ok("Success"));
+    }
+
+    #[tokio::test]
+    async fn test_flatten_error() {
+        let handle = task::spawn(async { Err::<(), _>("Failure") });
+        let result = flatten(handle).await;
+        assert_eq!(result, Err("Failure"));
+    }
+
+    #[tokio::test]
+    async fn test_flatten_panicked() {
+        let handle: tokio::task::JoinHandle<Result<(), &'static str>> = tokio::spawn(async {
+            panic!("Oops");
+        });
+
+        let result = flatten(handle).await;
+
+        assert!(result.is_err());
+    }
+}

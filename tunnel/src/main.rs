@@ -20,7 +20,7 @@
 //! The frobabilities are givven as floating point numbers between 0 and 1.
 
 use env_logger::TimestampPrecision;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::{
     io::AsyncReadExt,
@@ -28,11 +28,15 @@ use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
 };
-use utils::{frame::Frame, io::writer, misc::flatten};
+use utils::{
+    frame::Frame,
+    io::{writer, CHANNEL_CAPACITY},
+    misc::flatten,
+};
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -162,26 +166,26 @@ async fn handle_connection(
     drop_probability: f32,
     flip_probability: f32,
 ) {
-    let (client_tx, client_rx) = mpsc::channel::<Vec<u8>>(100);
-    let (server_tx, server_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (client_tx, client_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
+    let (server_tx, server_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Split streams
     let (client_read, client_write) = client_stream.into_split();
     let (server_read, server_write) = server_stream.into_split();
 
     // Generate writer tasks
-    let client_writer = writer(client_write, server_rx);
-    let server_writer = writer(server_write, client_rx);
+    let client_writer = writer(client_write, client_rx);
+    let server_writer = writer(server_write, server_rx);
 
     let client_handler = handle_client(
         client_read,
-        client_tx.clone(),
+        server_tx.clone(),
         drop_probability,
         flip_probability,
     );
     let server_handler = handle_server(
         server_read,
-        server_tx.clone(),
+        client_tx.clone(),
         drop_probability,
         flip_probability,
     );
@@ -217,6 +221,7 @@ fn handle_client(
             // =====================================================================
             // Read client stream
             // =====================================================================
+            debug!("Reading from client");
             let mut from_client = [0; Frame::MAX_SIZE];
             let read_length = match client_read.read(&mut from_client).await {
                 Ok(v) => v,
@@ -249,8 +254,12 @@ fn handle_client(
             // =====================================================================
             // Send the frame to server
             // =====================================================================
+            debug!("Sending frame to server");
             // Send the file contents to the server
-            server_tx.send(from_client.to_vec()).await.unwrap();
+            server_tx
+                .send(from_client[..read_length].to_vec())
+                .await
+                .unwrap();
         }
     })
 }
@@ -269,6 +278,7 @@ fn handle_server(
             // =====================================================================
             // Read server stream
             // =====================================================================
+            debug!("Reading from server");
             let mut from_server = [0; Frame::MAX_SIZE];
             let read_length = match server_read.read(&mut from_server).await {
                 Ok(read_length) => read_length,
@@ -301,7 +311,11 @@ fn handle_server(
             // =====================================================================
             // Send the frame to client
             // =====================================================================
-            client_tx.send(from_server.to_vec()).await.unwrap();
+            debug!("Sending frame to client");
+            client_tx
+                .send(from_server[..read_length].to_vec())
+                .await
+                .unwrap();
         }
     })
 }

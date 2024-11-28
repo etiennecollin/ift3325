@@ -1,0 +1,147 @@
+classDiagram
+    class Client {
+      <<struct>>
+      - handle_server(stream: TcpStream, addr: SocketAddr) -> Result&lt;bool, &apos;static str&gt;
+      - assembler(mut assembler_rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;, write_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;, addr: SocketAddr) -> Result&lt;&&apos;static str, &&apos;static str&gt;
+    }
+
+    class Server {
+      <<struct>>
+      - handle_client(stream: TcpStream, addr: SocketAddr) -> Result&lt;bool, &apos;static str&gt;
+      - assembler(mut assembler_rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;, write_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;, addr: SocketAddr) -> Result&lt;&&apos;static str, &&apos;static str&gt;
+    }
+
+    class Tunnel {
+       <<struct>>
+        + transmit(data: &[u8]): Result&lt;&lpar;&rpar;, Error&gt;
+        + receive(): Result&lt;Vec&lt;u8&gt;, Error&gt;
+        + corrupt_frame(frame: Frame) : Result&lt;Frame, Error&gt;
+        + drop_frame(frame: Frame) : Result&lt;&lpar;&rpar;, Error&gt;
+    }
+
+    class FrameType {
+        <<enumeration>>
+        Information : u8
+        ConnexionRequest : u8
+        ReceiveReady : u8
+        Reject : u8
+        ConnexionEnd : u8
+        P : u8
+        Unknown : u8
+    }
+
+    class FrameError {
+        <<enumeration>>
+        InvalidFrameType : u8
+        InvalidFCS : u16
+        InvalidLength : u8
+        MissingBoundaryFlag : u8
+        AbortSequenceReceived : u8
+        DestuffingError : u8
+        InvalidFrame : u8
+    }
+
+    class Frame {
+        <<struct>>
+        + frame_type: u8
+        + num: u8
+        + data: Vec&lt;u8&gt;
+        + fcs: Option&lt;u16&gt;
+        + content: Option&lt;Vec&lt;u8&gt;&gt;
+        + content_stuffed: Option&lt;Vec&lt;u8&gt;&gt;
+
+        + new(frame_type: u8, num: u8, data: Vec&lt;u8&gt;) : Frame
+        + generate_content(&self)
+        + to_bytes(&self) : Vec&lt;u8&gt;
+        + from_bytes(bytes: &[u8]) : Result&lt;Frame, FrameError&gt;
+    }
+
+    class Window {
+        <<struct>>
+        const NUMBERING_BITS: usize = 3
+        const MAX_FRAME_NUM: u8 = 8
+        const FRAME_TIMEOUT: u64 = 3
+        const SIZE_GO_BACK_N: usize = 7
+        const SIZE_SREJ: usize = 4
+        -frames: VecDeque&lt;Frame&gt;
+        -resend_all: bool
+        -is_connected: bool
+        -srej: bool
+        -waiting_disconnect: bool
+        +new() Self
+        +get_size(&self) usize
+        +push(&mut self, frame: Frame) Result&lt;&lpar;&rpar;, WindowError&gt;
+        +pop_front(&mut self, condition: &SafeCond) Option&lt;Frame&gt;
+        +is_full(&self) bool
+        +contains(&self, num: u8) bool
+        +is_empty(&self) bool
+        +pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) usize
+        +default() Self
+    }
+
+    class WindowError {
+        <<enumeration>>
+        Full: u8
+    }
+
+    class Utils {
+        <<package>>
+    }
+
+    class ByteStuffing {
+        <<package>>
+        + byte_stuffing(frame_bytes: &[u8]) : Vec&lt;u8&gt;
+        + byte_destuffing(frame_bytes: &[u8]) : Result&lt;Vec&lt;u8&gt;, FrameError&gt;
+    }
+
+    class CRC {
+        <<package>>
+        + lookup_table() : [u16; 256]
+        + crc_16_ccitt(data: &[u8]) : u16
+    }
+
+    class IO {
+        <<package>>
+        +connection_request(window: &SafeWindow, connection_start: bool, srej:Option&lt;u8&gt;, tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;, condition:&SafeCond)
+        + reader(stream: OwnedReadHalf, window: SafeWindow, condition: SafeCond, writer_tx: Option&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;, assembler_tx: Option&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;) : JoinHandle&lt;Result&lt;&&apos;static str, &&apos;static str&gt;&gt;
+        + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;) : JoinHandle&lt;Result&lt;&apos;static str, &apos;static str&gt;&gt;
+    }
+
+    class CRC {
+        + calculate(data: &[u8]): u16
+        + validate(data: &[u8], crc: u16): bool
+    }
+
+    class GoBackN {
+        - windowSize: usize
+        - frames: Vec&lt;Frame&gt;
+        + send(data: &[u8]): Result&lt;&lpar;&rpar;, Error&gt;
+        + handleTimeouts(): Result&lt;&lpar;&rpar;, Error&gt;
+    }
+
+    Client --> Frame : utilise
+    Client --> Window : utilise
+    Server --> Frame : utilise
+    Server --> Window : utilise
+
+    Window --> WindowError : utilise
+
+    Frame --> CRC : utilise
+    Frame --> ByteStuffing : utilise
+
+    Client --> Tunnel : reçoit les frames du client
+    Tunnel --> Client : envoie les frames du serveur
+    Server --> Tunnel : reçoit les frames du serveur
+    Tunnel --> Server : envoie les frames du client
+
+    Tunnel --> CRC : validates
+    Client --> GoBackN : controls
+    GoBackN --> Frame : manages
+
+    Tunnel --> Frame : corromps
+    Tunnel --> Frame : détruit
+
+    Utils --|> ByteStuffing : contient
+    Utils --|> CRC : contient
+    Utils --|> IO : contient
+

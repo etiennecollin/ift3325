@@ -304,3 +304,58 @@ pub async fn handle_p(writer_tx: &Sender<Vec<u8>>, expected_info_num: &u8) -> bo
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{Frame, FrameType};
+    use crate::window::{SafeCond, SafeWindow};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_handle_connection_end() {
+        let window = SafeWindow::default();
+        let (tx, mut rx) = mpsc::channel(10);
+        let cond = SafeCond::default();
+
+        let should_terminate = handle_connection_end(&window, &tx, &cond).await;
+
+        assert!(should_terminate);
+        assert!(rx.try_recv().is_ok(), "Acknowledgment frame not sent");
+    }
+
+    #[tokio::test]
+    async fn test_handle_receive_ready() {
+        let window = SafeWindow::default();
+        let cond = SafeCond::default();
+
+        let frame = Frame::new(FrameType::ReceiveReady, 1, vec![]);
+        let should_continue = handle_receive_ready(&window, &frame, &cond);
+
+        assert!(!should_continue);
+    }
+    #[tokio::test]
+    async fn test_handle_reject() {
+        let window = SafeWindow::default();
+        let cond = SafeCond::default();
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(10);
+
+        {
+            let mut window = window.lock().unwrap();
+            window
+                .push(Frame::new(FrameType::Information, 1, vec![]))
+                .unwrap();
+            window.is_connected = true;
+        }
+
+        let frame = Frame::new(FrameType::Reject, 1, vec![]);
+
+        let should_continue = handle_reject(&window, &frame, &tx, &cond).await;
+
+        assert!(
+            !should_continue,
+            "Handler should not terminate the connection"
+        );
+        assert!(rx.try_recv().is_ok(), "Rejection frame not resent");
+    }
+}

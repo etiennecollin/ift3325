@@ -1,10 +1,10 @@
 //! Contains the functions to manage the IO tasks.
-
 use crate::{
     frame::{Frame, FrameType},
     frame_handlers::*,
     window::{SafeCond, SafeWindow, Window},
 };
+
 use log::{debug, error, info, warn};
 use std::process::exit;
 use tokio::{
@@ -53,6 +53,11 @@ pub fn reader(
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
             let read_length = match stream.read(&mut buf).await {
+                Ok(0) => {
+                    // EOF reached
+                    info!("EOF reached on the stream");
+                    return Ok("Connection ended by server");
+                }
                 Ok(read_length) => read_length,
                 Err(e) => {
                     error!("Failed to read from stream: {}", e);
@@ -339,4 +344,60 @@ pub async fn connection_request(
         .lock()
         .expect("Failed to lock window")
         .is_connected = connection_start;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::create_tcp_streams;
+
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::mpsc;
+    #[tokio::test]
+    async fn test_writer() {
+        let (_, writer_mock, mut reader_mock, _) = create_tcp_streams::create_tcp_streams().await;
+        let (tx, rx) = mpsc::channel(10);
+
+        // Send a mock message
+        tx.send(vec![1, 2, 3, 4]).await.unwrap();
+        drop(tx); // Close sender to allow writer to complete
+
+        // Spawn a task to read from the stream
+        let reader_handle = tokio::spawn(async move {
+            let mut buf = vec![0; 64];
+            let n = reader_mock.read(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], &[1, 2, 3, 4]);
+        });
+
+        let writer_handle = writer(writer_mock, rx);
+
+        assert!(writer_handle.await.unwrap().is_ok(), "Writer task failed");
+        reader_handle.await.unwrap();
+    }
+    #[tokio::test]
+    async fn test_reader() {
+        let (mut reader_mock, _, _, mut writer_mock) =
+            create_tcp_streams::create_tcp_streams().await;
+        let (writer_tx, _) = mpsc::channel(10);
+
+        // Mock the input to the reader by writing data to the server's write half
+        let writer_task = tokio::spawn(async move {
+            writer_mock
+                .write_all(&[1, 2, 3, 4, Frame::BOUNDARY_FLAG])
+                .await
+                .unwrap();
+            writer_mock.shutdown().await.unwrap()
+        });
+
+        let safe_window = SafeWindow::default();
+        let condition = SafeCond::default();
+
+        let reader_handle = reader(reader_mock, safe_window, condition, Some(writer_tx), None);
+
+        let result = reader_handle.await.unwrap();
+        assert!(result.is_ok(), "Reader task failed");
+
+        writer_task.await.unwrap();
+    }
+
 }

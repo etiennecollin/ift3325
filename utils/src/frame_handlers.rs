@@ -323,7 +323,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(10);
         let cond = SafeCond::default();
 
-        let should_terminate = handle_connection_end(&window, &tx, &cond).await;
+        let should_terminate = handle_connection_end(window, tx, cond).await;
 
         assert!(should_terminate);
         assert!(rx.try_recv().is_ok(), "Acknowledgment frame not sent");
@@ -335,7 +335,7 @@ mod tests {
         let cond = SafeCond::default();
 
         let frame = Frame::new(FrameType::ReceiveReady, 1, vec![]);
-        let should_continue = handle_receive_ready(&window, &frame, &cond);
+        let should_continue = handle_receive_ready(window, &frame, cond);
 
         assert!(!should_continue);
     }
@@ -348,14 +348,13 @@ mod tests {
         {
             let mut window = window.lock().unwrap();
             window
-                .push(Frame::new(FrameType::Information, 1, vec![]))
+                .push(Frame::new(FrameType::Information, 1, vec![]), tx.clone())
                 .unwrap();
             window.is_connected = true;
         }
 
         let frame = Frame::new(FrameType::Reject, 1, vec![]);
-
-        let should_continue = handle_reject(&window, &frame, &tx, &cond).await;
+        let should_continue = handle_reject(window, &frame, tx, cond).await;
 
         assert!(
             !should_continue,

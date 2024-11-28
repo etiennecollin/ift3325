@@ -40,7 +40,7 @@ const OUTPUT_DIR: &str = "./output";
 ///
 /// This function sets up the logging, parses the command-line arguments to get the port number,
 /// binds to the specified address and port, and enters a loop to accept client connections.
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -138,16 +138,12 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
     let condition = Arc::new(Condvar::new());
 
     // Spawn reader task which receives frames from the server
-    let write_tx_clone = write_tx.clone();
-    let assembler_tx_clone = assembler_tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
     let reader = reader(
         read,
-        window_clone,
-        condition_clone,
-        Some(write_tx_clone),
-        Some(assembler_tx_clone),
+        window.clone(),
+        condition.clone(),
+        Some(write_tx.clone()),
+        Some(assembler_tx.clone()),
     );
 
     // Spawn the writer task which sends frames to the server
@@ -186,6 +182,9 @@ async fn assembler(
         data.extend_from_slice(&frame_data);
     }
 
+    // Close the receiver channel
+    assembler_rx.close();
+
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
@@ -197,7 +196,7 @@ async fn assembler(
         .expect("Failed to create output directory");
 
     // Save the data to a file
-    let filepath = format!("{}/client_destroy.txt", OUTPUT_DIR);
+    let filepath = format!("{}/out_{}.txt", OUTPUT_DIR, addr.port());
     let mut file = File::create(&filepath)
         .await
         .expect("Failed to create test file");

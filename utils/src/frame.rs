@@ -23,7 +23,7 @@ use crate::{
 #[derive(Debug)]
 pub enum FrameError {
     InvalidFrameType(u8),
-    InvalidFCS(u16),
+    InvalidFCS,
     InvalidLength(usize),
     MissingBoundaryFlag,
     AbortSequenceReceived,
@@ -115,13 +115,13 @@ impl Frame {
     ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
-    /// - Content
+    /// - Content (2x since each byte could be stuffed and escaped)
     ///     - 1 byte: frame_type
     ///     - 1 byte: num
     ///     - n bytes: data
     ///     - 2 bytes: fcs stored as big-endian
     /// - 1 byte: boundary flag
-    pub const MAX_SIZE: usize = 6 + Self::MAX_SIZE_DATA;
+    pub const MAX_SIZE: usize = 2 + 2 * (4 + Self::MAX_SIZE_DATA);
 
     /// Create a new frame
     /// # Parameters
@@ -205,7 +205,6 @@ impl Frame {
     ///    - n bytes: data
     ///    - 2 bytes: fcs stored as big-endian
     pub fn from_bytes(bytes: &[u8]) -> Result<Frame, FrameError> {
-        debug!("Decoding frame from bytes: {:X?}", bytes);
         // The frame should contain at least 4 bytes: 1 frame_type, 1 num, 2 FCS
         if bytes.len() < 4 {
             return Err(FrameError::InvalidLength(bytes.len()));
@@ -214,31 +213,23 @@ impl Frame {
         // Destuff the frame content
         let content = byte_destuffing(bytes)?;
 
-        debug!("Destuffed frame content: {:X?}", content);
+        // Check that the FCS matches the CRC
+        let checksum = crc_16_ccitt(&content);
+        if checksum != 0 {
+            return Err(FrameError::InvalidFCS);
+        }
 
         // Extract the frame information
-        let frame_type = content[0];
+        let frame_type = match FrameType::from(content[0]) {
+            FrameType::Unknown => return Err(FrameError::InvalidFrameType(content[0])),
+            frame_type => frame_type,
+        };
+
         let num = content[1];
         let data = content[2..content.len() - 2].to_vec();
         let fcs = u16::from_be_bytes([content[content.len() - 2], content[content.len() - 1]]);
 
-        // Check that the FCS matches the CRC
-        let mut frame_content = vec![frame_type, num];
-        frame_content.append(&mut data.clone());
-        let expected_fcs = crc_16_ccitt(&frame_content);
-
-        // We could check that the CRC of fame_type, num, data and fcs is 0,
-        // but it requires a second CRC and is not necessary
-        if fcs != expected_fcs {
-            return Err(FrameError::InvalidFCS(fcs));
-        }
-
         // Create the frame content
-        let frame_type = match FrameType::from(frame_type) {
-            FrameType::Unknown => return Err(FrameError::InvalidFrameType(frame_type)),
-            frame_type => frame_type,
-        };
-
         let mut frame = Frame::new(frame_type, num, data);
         frame.fcs = Some(fcs);
         frame.content = Some(content);

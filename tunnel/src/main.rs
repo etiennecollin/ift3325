@@ -36,7 +36,7 @@ use utils::{
 
 /// This is a simple tunnel that takes frames from a client and sends them to a server.
 /// It is used to introduce errors in the communication for testing purposes.
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -174,18 +174,18 @@ async fn handle_connection(
     let (server_read, server_write) = server_stream.into_split();
 
     // Generate writer tasks
-    let client_writer = writer(client_write, server_rx);
-    let server_writer = writer(server_write, client_rx);
+    let client_writer = writer(client_write, client_rx);
+    let server_writer = writer(server_write, server_rx);
 
     let client_handler = handle_client(
         client_read,
-        client_tx.clone(),
+        server_tx.clone(),
         drop_probability,
         flip_probability,
     );
     let server_handler = handle_server(
         server_read,
-        server_tx.clone(),
+        client_tx.clone(),
         drop_probability,
         flip_probability,
     );

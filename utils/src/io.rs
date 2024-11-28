@@ -58,13 +58,17 @@ pub fn reader(
             debug!("Reader waiting for data");
             // Read from the stream into the buffer
             let mut buf = [0; Frame::MAX_SIZE];
-            let read_length = match stream.read(&mut buf[..]).await {
+            let read_length = match stream.read(&mut buf).await {
                 Ok(read_length) => read_length,
                 Err(e) => {
                     error!("Failed to read from stream: {}", e);
                     return Err("Connection ended with an error");
                 }
             };
+
+            if read_length == 0 {
+                return Ok("Connection ended");
+            }
             debug!("Reader received {} bytes", read_length);
 
             // Iterate over the received bytes
@@ -92,8 +96,8 @@ pub fn reader(
                         frame,
                         window.clone(),
                         condition.clone(),
-                        writer_tx.as_ref(),
-                        assembler_tx.as_ref(),
+                        writer_tx.clone(),
+                        assembler_tx.clone(),
                         &mut next_info_frame_num,
                     )
                     .await;
@@ -153,8 +157,8 @@ pub async fn handle_reception(
     frame: Frame,
     safe_window: SafeWindow,
     condition: SafeCond,
-    writer_tx: Option<&mpsc::Sender<Vec<u8>>>,
-    assembler_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    writer_tx: Option<mpsc::Sender<Vec<u8>>>,
+    assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
     expected_info_num: &mut u8,
 ) -> bool {
     let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
@@ -178,7 +182,7 @@ pub async fn handle_reception(
             )
             .await
         }
-        FrameType::P => handle_p(writer_tx, expected_info_num).await,
+        FrameType::P => handle_p(writer_tx, *expected_info_num).await,
         FrameType::Unknown => false,
     }
 }
@@ -200,17 +204,15 @@ pub fn writer(
         while let Some(frame) = rx.recv().await {
             debug!("Sending frame {:X?}", frame);
             // Send the file contents to the server
-            match stream.write_all(&frame).await {
-                Ok(it) => it,
-                Err(_) => return Err("Failed to write to stream"),
+            if stream.write_all(&frame).await.is_err() {
+                return Err("Failed to write to stream");
             };
 
             // Flush the stream to ensure the data is sent immediately
-            match stream.flush().await {
-                Ok(it) => it,
-                Err(_) => return Err("Failed to flush stream"),
+            if (stream.flush().await).is_err() {
+                return Err("Failed to flush stream");
             };
-            info!("Sent frame {}", frame[2]);
+            info!("Sent frame");
         }
 
         // Close the connection
@@ -241,8 +243,7 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
     tokio::spawn(async move {
         debug!("Frame timer started for frame {}", frame_bytes[2]);
 
-        let sleep_duration = time::Duration::from_secs(Window::FRAME_TIMEOUT);
-        let mut interval = time::interval(sleep_duration);
+        let mut interval = time::interval(time::Duration::from_secs(Window::FRAME_TIMEOUT));
         loop {
             interval.tick().await;
 
@@ -251,7 +252,6 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
                 .await
                 .expect("Failed to send frame");
             debug!("Resent frame {}", frame_bytes[2]);
-            debug!("Timer perspective cap: {}", tx.capacity());
         }
     })
 }

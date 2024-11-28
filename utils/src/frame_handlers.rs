@@ -39,7 +39,7 @@ pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame, condition: S
 /// from our window as it was acknowledged.
 pub async fn handle_connection_end(
     safe_window: SafeWindow,
-    writer_tx: &Sender<Vec<u8>>,
+    writer_tx: Sender<Vec<u8>>,
     condition: SafeCond,
 ) -> bool {
     let sent_disconnect_request;
@@ -78,7 +78,7 @@ pub async fn handle_connection_end(
 pub async fn handle_connection_start(
     safe_window: SafeWindow,
     frame: &Frame,
-    writer_tx: &Sender<Vec<u8>>,
+    writer_tx: Sender<Vec<u8>>,
     condition: SafeCond,
 ) -> bool {
     let is_window_empty;
@@ -128,7 +128,7 @@ pub async fn handle_connection_start(
 pub async fn handle_reject(
     safe_window: SafeWindow,
     frame: &Frame,
-    writer_tx: &Sender<Vec<u8>>,
+    writer_tx: Sender<Vec<u8>>,
     condition: SafeCond,
 ) -> bool {
     let frames: Vec<(u8, Vec<u8>)>;
@@ -201,9 +201,9 @@ pub async fn handle_reject(
 pub async fn handle_information(
     safe_window: SafeWindow,
     frame: Frame,
-    writer_tx: &Sender<Vec<u8>>,
+    writer_tx: Sender<Vec<u8>>,
     condition: SafeCond,
-    assembler_tx: &Sender<Vec<u8>>,
+    assembler_tx: Sender<Vec<u8>>,
     expected_info_num: &mut u8,
 ) -> bool {
     // Ignore the frame if the connection is not established
@@ -217,7 +217,7 @@ pub async fn handle_information(
 
     // Check if a frame was dropped
     if *expected_info_num != frame.num {
-        return handle_dropped_frame(&frame, safe_window, writer_tx, expected_info_num).await;
+        return handle_dropped_frame(&frame, safe_window, writer_tx, *expected_info_num).await;
     }
 
     // Pop old reject frames from window
@@ -255,8 +255,8 @@ pub async fn handle_information(
 pub async fn handle_dropped_frame(
     frame: &Frame,
     safe_window: SafeWindow,
-    writer_tx: &Sender<Vec<u8>>,
-    expected_info_num: &u8,
+    writer_tx: Sender<Vec<u8>>,
+    expected_info_num: u8,
 ) -> bool {
     warn!(
         "Dropped frame detected - Received: {}, Expected: {}",
@@ -266,14 +266,14 @@ pub async fn handle_dropped_frame(
     {
         // If window is full, ignore frame
         let window = safe_window.lock().expect("Failed to lock window");
-        if window.is_full() || window.contains(*expected_info_num) {
+        if window.is_full() || window.contains(expected_info_num) {
             debug!("Window is full or contains frame, ignoring");
             return false;
         }
     }
 
     // Create a reject frame for the dropped frame
-    let rej_frame = Frame::new(FrameType::Reject, *expected_info_num, Vec::new());
+    let rej_frame = Frame::new(FrameType::Reject, expected_info_num, Vec::new());
 
     // Send a reject frame
     writer_tx
@@ -296,16 +296,16 @@ pub async fn handle_dropped_frame(
 ///
 /// Send an acknowledgment for the P frame telling the sender that the receiver is ready to
 /// receive.
-pub async fn handle_p(writer_tx: &Sender<Vec<u8>>, expected_info_num: &u8) -> bool {
+pub async fn handle_p(writer_tx: Sender<Vec<u8>>, expected_info_num: u8) -> bool {
     // Send an acknowledgment for the P frame
-    let ack_frame = Frame::new(FrameType::ReceiveReady, *expected_info_num, Vec::new()).to_bytes();
+    let ack_frame = Frame::new(FrameType::ReceiveReady, expected_info_num, Vec::new()).to_bytes();
     writer_tx
         .send(ack_frame)
         .await
         .expect("Failed to send acknowledgment frame");
 
     info!("Received P frame");
-    info!("Sent RR {}", *expected_info_num);
+    info!("Sent RR {}", expected_info_num);
 
     false
 }

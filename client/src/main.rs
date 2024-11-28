@@ -17,7 +17,7 @@
 //! the file you want to send.
 
 use env_logger::TimestampPrecision;
-use log::{error, info};
+use log::{debug, error, info};
 use std::{
     env,
     fs::File,
@@ -26,10 +26,10 @@ use std::{
     process::exit,
     sync::{Arc, Condvar, Mutex},
 };
-use tokio::{net::TcpStream, sync::mpsc};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, reader, writer},
+    io::{connection_request, reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
@@ -38,7 +38,7 @@ use utils::{
 ///
 /// This function sets up logging, processes command-line arguments to extract the server address,
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Tokio task debugger
     console_subscriber::init();
@@ -107,8 +107,6 @@ async fn main() {
     };
 
     setup_connection(stream, srej, file_path).await;
-
-    exit(0);
 }
 
 /// Sets up the connection with the server.
@@ -126,13 +124,13 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
     let reader = reader(
@@ -161,9 +159,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     // =========================================================================
     // Send the file to the server
     // =========================================================================
-    let tx_clone = tx.clone();
-    let sender =
-        tokio::spawn(async move { send_file(tx_clone, window, condition, file_path).await });
+    let sender = send_file(tx.clone(), window.clone(), condition.clone(), file_path);
 
     // Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -199,80 +195,92 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// - The condition cannot be waited on.
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
-async fn send_file(
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+fn send_file(
+    tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
     condition: SafeCond,
     file_path: String,
-) -> Result<&'static str, &'static str> {
-    // Open the file
-    let mut file = match File::open(&file_path) {
-        Ok(file) => {
-            info!("Opened file: {}", file_path);
-            file
-        }
-        Err(e) => {
-            error!("Failed to open file: {}", e);
+) -> JoinHandle<Result<&'static str, &'static str>> {
+    tokio::spawn(async move {
+        // Open the file
+        let mut file = match File::open(&file_path) {
+            Ok(file) => {
+                info!("Opened file: {}", file_path);
+                file
+            }
+            Err(e) => {
+                error!("Failed to open file: {}", e);
+                return Err("Failed to send file");
+            }
+        };
+
+        // Read the file contents into the buffer
+        let mut buf = Vec::new();
+        if let Err(e) = file.read_to_end(&mut buf) {
+            error!("Failed to read file contents: {}", e);
             return Err("Failed to send file");
         }
-    };
 
-    // Read the file contents into the buffer
-    let mut buf = Vec::new();
-    if let Err(e) = file.read_to_end(&mut buf) {
-        error!("Failed to read file contents: {}", e);
-        return Err("Failed to send file");
-    }
+        // Read the file in chunks and create the frames to be sent
+        let mut num: u8;
+        for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
+            let frame_bytes: Vec<u8>;
 
-    // Read the file in chunks and create the frames to be sent
-    let mut num: u8;
-    for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
-        let frame_bytes: Vec<u8>;
+            // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
+            {
+                // Lock the window to access the frames
+                let mut window = safe_window.lock().expect("Failed to lock window");
+
+                // Get the frame number based on the chunk index and the window size
+                num = (i % Window::MAX_FRAME_NUM as usize) as u8;
+
+                // Create a new frame with the chunk data
+                let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
+                frame_bytes = frame.to_bytes();
+
+                // Wait for the window to have space
+                window = condition
+                    .wait_while(window, |window| window.is_full())
+                    .expect("Failed to wait for condition");
+
+                // Push the frame to the window
+                window
+                    .push(frame, tx.clone())
+                    .expect("Failed to push frame to window, this should never happen");
+            }
+
+            // Send the frame to the writer tas
+            tx.send(frame_bytes)
+                .await
+                .expect("Failed to send frame to writer task");
+
+            info!("Sent frame {}", num);
+        }
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
+        info!("Finished sending file contents, waiting for window to be empty");
         {
-            // Lock the window to access the frames
             let mut window = safe_window.lock().expect("Failed to lock window");
-
-            // Get the frame number based on the chunk index and the window size
-            num = (i % Window::MAX_FRAME_NUM as usize) as u8;
-
-            // Create a new frame with the chunk data
-            let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
-            frame_bytes = frame.to_bytes();
-
-            // Wait for the window to have space
-            window = condition
-                .wait_while(window, |window| window.is_full())
-                .expect("Failed to wait for condition");
-
-            // Push the frame to the window
-            window
-                .push(frame, tx.clone())
-                .expect("Failed to push frame to window, this should never happen");
+            while !window.is_empty() {
+                debug!(
+                    "Window still not empty: {:X?}",
+                    window
+                        .frames
+                        .iter()
+                        .map(|(f, t)| (f.num, t))
+                        .collect::<Vec<(u8, &JoinHandle<()>)>>()
+                );
+                window = condition
+                    .wait(window)
+                    .expect("Failed to wait for condition");
+            }
         }
+        info!("Window is empty, all data sent");
 
-        tx.send(frame_bytes)
-            .expect("Failed to send frame to writer task");
-
-        info!("Sent frame {}", num);
-    }
-
-    // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
-    info!("Finished sending file contents, waiting for window to be empty");
-    {
-        let mut window = safe_window.lock().expect("Failed to lock window");
-        while !window.is_empty() {
-            window = condition
-                .wait(window)
-                .expect("Failed to wait for condition");
-        }
-    }
-    info!("Window is empty, all data sent");
-
-    // Send disconnect frame
-    connection_request(safe_window, false, None, tx, condition).await;
-    Ok("Connection ended by client")
+        // Send disconnect frame
+        connection_request(safe_window, false, None, tx, condition).await;
+        Ok("Connection ended by client")
+    })
 }
 
 // #[cfg(test)]

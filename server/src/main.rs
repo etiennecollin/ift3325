@@ -29,9 +29,9 @@ use tokio::{
     task,
 };
 use utils::{
-    io::{reader, writer},
+    io::{reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
-    window::Window,
+    window::{SafeCond, SafeWindow, Window},
 };
 
 const OUTPUT_DIR: &str = "./output";
@@ -40,7 +40,7 @@ const OUTPUT_DIR: &str = "./output";
 ///
 /// This function sets up the logging, parses the command-line arguments to get the port number,
 /// binds to the specified address and port, and enters a loop to accept client connections.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -127,27 +127,23 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
     // Create channel to reassemble frames
-    let (assembler_tx, assembler_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
-    let write_tx_clone = write_tx.clone();
-    let assembler_tx_clone = assembler_tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
     let reader = reader(
         read,
-        window_clone,
-        condition_clone,
-        Some(write_tx_clone),
-        Some(assembler_tx_clone),
+        window.clone(),
+        condition.clone(),
+        Some(write_tx.clone()),
+        Some(assembler_tx.clone()),
     );
 
     // Spawn the writer task which sends frames to the server
@@ -177,7 +173,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
 }
 
 async fn assembler(
-    mut assembler_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut assembler_rx: mpsc::Receiver<Vec<u8>>,
     addr: SocketAddr,
 ) -> Result<&'static str, &'static str> {
     // Get all the data until the connection is closed
@@ -186,10 +182,13 @@ async fn assembler(
         data.extend_from_slice(&frame_data);
     }
 
+    // Close the receiver channel
+    assembler_rx.close();
+
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
-    info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
+    // info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
     // Create the output directory if it does not exist
     create_dir_all(OUTPUT_DIR)
@@ -197,7 +196,7 @@ async fn assembler(
         .expect("Failed to create output directory");
 
     // Save the data to a file
-    let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    let filepath = format!("{}/out_{}.txt", OUTPUT_DIR, addr.port());
     let mut file = File::create(&filepath)
         .await
         .expect("Failed to create test file");

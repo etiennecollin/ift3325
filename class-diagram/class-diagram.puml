@@ -45,9 +45,9 @@ enum FrameError {
   + frame_type: u8
   + num: u8
   + data: Vec<u8>
-  - fcs: Option<u16>
-  - content: Option<Vec<u8>>
-  - content_stuffed: Option<Vec<u8>>
+  + fcs: Option<u16>
+  + content: Option<Vec<u8>>
+  + content_stuffed: Option<Vec<u8>>
 
   + new(frame_type: u8, num: u8, data: Vec<u8>) : Frame
   + generate_content(&self)
@@ -74,7 +74,7 @@ class "<<struct>>\nWindow" as Window {
   + contains(&self, num: u8) bool
   + is_empty(&self) bool
   + pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) usize
-  - default() Self
+  + default() Self
 }
 
 enum WindowError {
@@ -90,7 +90,7 @@ enum WindowError {
   }
 
   annotation "<<package>>\nIO" as IO {
-    + async connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
+    + connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
     + reader(stream: OwnedReadHalf, window: SafeWindow, condition: SafeCond, writer_tx: Option<mpsc::Sender<Vec<u8>>>, assembler_tx: Option<mpsc::Sender<Vec<u8>>>) : JoinHandle<Result<&'static str, &'static str>>
     + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>) : JoinHandle<Result<&'static str, &'static str>>
     + handle_reception(frame: Frame, safe_window: &SafeWindow, condition: &SafeCond, writer_tx: Option<&mpsc::Sender<Vec<u8>>, assembler_tx: Option<&mpsc::Sender<Vec<u8>>, expected_info_num: &mut u8) : bool

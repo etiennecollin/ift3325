@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["connection_request","create_frame_timer","handle_reception","reader","writer"]};
+window.SIDEBAR_ITEMS = {"constant":["CHANNEL_CAPACITY"],"fn":["connection_request","create_frame_timer","handle_reception","reader","writer"]};

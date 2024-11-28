@@ -4,20 +4,21 @@ skinparam nodesep 150
 skinparam ranksep 100
 
 class  "<<struct>>\nClient" as Client{
-  - setup_connection(stream: TcpStream, srej: u8,file_path: String) 
-  - send_file(tx: mpsc::Sender<Vec<u8>>, file_path: String) : Result<&'static str, &'static str>
+  - async setup_connection(stream: TcpStream, srej: u8,file_path: String) 
+  - async send_file(tx: mpsc::Sender<Vec<u8>>, file_path: String) : Result<&'static str, &'static str>
 }
 
 class  "<<struct>>\nServer" as Server{
-  - handle_client(stream: TcpStream, addr: SocketAddr) : Result<bool, &'static str>
-  - assembler(mut assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) : Result<&'static str, &'static str>
+  - async handle_client(stream: TcpStream, addr: SocketAddr) : Result<bool, &'static str>
+  - async assembler(mut assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) : Result<&'static str, &'static str>
 }
 
   class "<<struct>>\nTunnel" as Tunnel {
-  + transmit(data: &[u8]): Result<(), Error>
-  + receive(): Result<Vec<u8>, Error>
-  + corrupt_frame(frame: Frame) : Result<Frame, Error>
-  + drop_frame(frame: Frame) : Result<(), Error>
+  - handle_connection(client_stream: TcpStream, server_stream: TcpStream,drop_probability: f32, flip_probability: f32)
+  - transmit(data: &[u8]): Result<(), Error>
+  - receive(): Result<Vec<u8>, Error>
+  - corrupt_frame(frame: Frame) : Result<Frame, Error>
+  - drop_frame(frame: Frame) : Result<(), Error>
 }
 
 enum FrameType {
@@ -44,9 +45,9 @@ enum FrameError {
   + frame_type: u8
   + num: u8
   + data: Vec<u8>
-  + fcs: Option<u16>
-  + content: Option<Vec<u8>>
-  + content_stuffed: Option<Vec<u8>>
+  - fcs: Option<u16>
+  - content: Option<Vec<u8>>
+  - content_stuffed: Option<Vec<u8>>
 
   + new(frame_type: u8, num: u8, data: Vec<u8>) : Frame
   + generate_content(&self)
@@ -55,17 +56,17 @@ enum FrameError {
 }
 
 class "<<struct>>\nWindow" as Window {
-  const NUMBERING_BITS: usize = 3
-  const MAX_FRAME_NUM: u8 = 8
-  const FRAME_TIMEOUT: u64 = 3
-  const SIZE_GO_BACK_N: usize = 7
-  const SIZE_SREJ: usize = 4
-  - frames: VecDeque<Frame>
-  - resend_all: bool
-  - is_connected: bool
-  - srej: bool
-  - sent_disconnect_request: bool
-  + new() Self
+  - const NUMBERING_BITS: usize = 3
+  - const MAX_FRAME_NUM: u8 = 8
+  - const FRAME_TIMEOUT: u64 = 3
+  - const SIZE_GO_BACK_N: usize = 7
+  - const SIZE_SREJ: usize = 4
+  + frames: VecDeque<Frame>
+  + resend_all: bool
+  + is_connected: bool
+  + srej: bool
+  + sent_disconnect_request: bool
+  + new() : Self
   + get_max_size(&self) usize
   + push(&mut self, frame: Frame) Result<(), WindowError>
   + pop_front(&mut self, condition: &SafeCond) Option<Frame>
@@ -73,7 +74,7 @@ class "<<struct>>\nWindow" as Window {
   + contains(&self, num: u8) bool
   + is_empty(&self) bool
   + pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) usize
-  + default() Self
+  - default() Self
 }
 
 enum WindowError {
@@ -89,7 +90,7 @@ enum WindowError {
   }
 
   annotation "<<package>>\nIO" as IO {
-    + connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
+    + async connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
     + reader(stream: OwnedReadHalf, window: SafeWindow, condition: SafeCond, writer_tx: Option<mpsc::Sender<Vec<u8>>>, assembler_tx: Option<mpsc::Sender<Vec<u8>>>) : JoinHandle<Result<&'static str, &'static str>>
     + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>) : JoinHandle<Result<&'static str, &'static str>>
     + handle_reception(frame: Frame, safe_window: &SafeWindow, condition: &SafeCond, writer_tx: Option<&mpsc::Sender<Vec<u8>>, assembler_tx: Option<&mpsc::Sender<Vec<u8>>, expected_info_num: &mut u8) : bool
@@ -104,15 +105,16 @@ annotation "<<package>>\nByteStuffing" as ByteStuffing {
 
   annotation "<<package>>\n FrameHandler" as FrameHandler {
     + handle_receive_ready(safe_window: &SafeWindow, frame: &Frame, condition:&SafeCond): bool
-    + handle_connection_end(safe_window: &SafeWindow, writer_tx: &Sender<Vec<u8>>, condition: &SafeCond): bool
-    + handle_reject(safe_window: &SafeWindow, frame: &Frame, writer_tx:&Sender<Vec<u8>>, condition: &SafeCond): bool
-    + handle_information(safe_window: &SafeWindow, frame: Frame, writer_tx:&Sender<Vec<u8>>, condition: &SafeCond, assembler_tx: &Sender<Vec<u8>>,expected_info_num: &mut u8): bool
-    + handle_dropped_frame(frame: &Frame, safe_window: &SafeWindow, writer_tx:&Sender<Vec<u8>>, expected_info_num: &u8): bool
-    + handle_p(writer_tx: &Sender<Vec<u8>>, expected_info_num: &u8): bool
+    + handle_connection_start(safe_window: SafeWindow, writer_tx:&UnboundedSender<Vec<u8>, condition: SafeCond): bool
+    + handle_connection_end(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>, condition: SafeCond): bool
+    + handle_reject(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>, condition: SafeCond): bool
+    + handle_information(safe_window: SafeWindow, frame: Frame, writer_tx:&UnboundedSender<Vec<u8>>, condition: SafeCond, assembler_tx:&UnboundedSender<Vec<u8>>, expected_info_num: &mut u8): bool
+    + handle_dropped_frame(frame: &Frame, safe_window:&SafeWindow,writer_tx:&UnboundedSender<Vec<u8>>, expected_info_num: &u8):bool
+    + handle_p(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>,condition: SafeCond): bool
     }
 
     annotation "<<package>>\n Misc" as Misc {
-    + flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str>
+    + async flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str>
     }
 
 

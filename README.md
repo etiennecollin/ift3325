@@ -2,6 +2,13 @@
 
 ![rust tests workflow](https://github.com/etiennecollin/ift3325/actions/workflows/rust.yml/badge.svg)
 
+## Dependencies
+
+- [Rust](https://www.rust-lang.org/tools/install)
+
+> [!NOTE]
+> The code was tested using `rustc 1.82.0`.
+
 ## Usage
 
 Run the server:
@@ -28,7 +35,21 @@ Run the tunnel:
 > [!NOTE]
 > The tunnel allows the simulation of a noisy environment where frames
 > might be dropped or suffer bit flips. The probabilities in the arguments are
-> values in the range \[0, 1\].
+> values in the range \[0, 1\] and are independant. Every frame, in any direction,
+> has a probability of being dropped. If it is not dropped, the second
+> probability is used to determine if a bit is flipped in the frame.
+
+## Example usage
+
+In this example, the client, tunnel and server will be used. Each frame, in
+any direction, has a 10% probability of being dropped and a 10% probability
+of suffering a bit flip.
+
+```bash
+cargo run --release -p server 8080
+cargo run --release -p tunnel 8081 127.0.0.1 8080 0.1 0.1
+cargo run --release -p client 127.0.0.1 8081 <file_path> 0
+```
 
 ## Debugging vs. Release
 

@@ -127,9 +127,9 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     // Create channel to reassemble frames
-    let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (assembler_tx, assembler_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     // Create a window to manage the frames
     let window = Arc::new(Mutex::new(Window::new()));
@@ -177,7 +177,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'st
 }
 
 async fn assembler(
-    mut assembler_rx: mpsc::Receiver<Vec<u8>>,
+    mut assembler_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     addr: SocketAddr,
 ) -> Result<&'static str, &'static str> {
     // Get all the data until the connection is closed

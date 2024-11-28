@@ -20,7 +20,7 @@
 //! The frobabilities are givven as floating point numbers between 0 and 1.
 
 use env_logger::TimestampPrecision;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::{env, net::SocketAddr, process::exit};
 use tokio::{
     io::AsyncReadExt,
@@ -162,8 +162,8 @@ async fn handle_connection(
     drop_probability: f32,
     flip_probability: f32,
 ) {
-    let (client_tx, client_rx) = mpsc::channel::<Vec<u8>>(100);
-    let (server_tx, server_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (client_tx, client_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (server_tx, server_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     // Split streams
     let (client_read, client_write) = client_stream.into_split();
@@ -208,7 +208,7 @@ async fn handle_connection(
 /// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_client(
     mut client_read: OwnedReadHalf,
-    server_tx: mpsc::Sender<Vec<u8>>,
+    server_tx: mpsc::UnboundedSender<Vec<u8>>,
     drop_probability: f32,
     flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
@@ -217,6 +217,7 @@ fn handle_client(
             // =====================================================================
             // Read client stream
             // =====================================================================
+            debug!("Reading from client");
             let mut from_client = [0; Frame::MAX_SIZE];
             let read_length = match client_read.read(&mut from_client).await {
                 Ok(v) => v,
@@ -249,8 +250,9 @@ fn handle_client(
             // =====================================================================
             // Send the frame to server
             // =====================================================================
+            debug!("Sending frame to server");
             // Send the file contents to the server
-            server_tx.send(from_client.to_vec()).await.unwrap();
+            server_tx.send(from_client.to_vec()).unwrap();
         }
     })
 }
@@ -260,7 +262,7 @@ fn handle_client(
 /// It introduces errors in the communication based on the drop and flip probabilities.
 fn handle_server(
     mut server_read: OwnedReadHalf,
-    client_tx: mpsc::Sender<Vec<u8>>,
+    client_tx: mpsc::UnboundedSender<Vec<u8>>,
     drop_probability: f32,
     flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
@@ -269,6 +271,7 @@ fn handle_server(
             // =====================================================================
             // Read server stream
             // =====================================================================
+            debug!("Reading from server");
             let mut from_server = [0; Frame::MAX_SIZE];
             let read_length = match server_read.read(&mut from_server).await {
                 Ok(read_length) => read_length,
@@ -301,7 +304,8 @@ fn handle_server(
             // =====================================================================
             // Send the frame to client
             // =====================================================================
-            client_tx.send(from_server.to_vec()).await.unwrap();
+            debug!("Sending frame to client");
+            client_tx.send(from_server.to_vec()).unwrap();
         }
     })
 }

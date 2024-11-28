@@ -1,18 +1,21 @@
 //! A sliding window for the HDLC protocol.
 
-use crate::frame::Frame;
+use crate::{frame::Frame, io::create_frame_timer};
 use log::debug;
 use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},
 };
+use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 
-/// Type alias for a safe window that can be shared and mutated between threads
+/// Type alias for a safe window that can be shared and mutated between threads.
 pub type SafeWindow = Arc<Mutex<Window>>;
-/// Type alias for a condition variable that can be safely shared between threads
+/// Type alias for a condition variable that can be safely shared between threads.
 pub type SafeCond = Arc<Condvar>;
+/// Type alias for a window element that contains a frame and the handle to a timer task.
+pub type WindowElement = (Frame, JoinHandle<()>);
 
-// Define the error type for the window
+/// Defines the error type for the window
 #[derive(Debug)]
 pub enum WindowError {
     /// The window is full and cannot accept any more frames
@@ -23,7 +26,7 @@ pub enum WindowError {
 /// It implements a deque with a maximum size of `WINDOW_SIZE`.
 pub struct Window {
     /// The frames in the window
-    pub frames: VecDeque<Frame>,
+    pub frames: VecDeque<WindowElement>,
     /// Flag to resend all frames in the window
     pub resend_all: bool,
     /// Flag to indicate if the connection is established
@@ -67,13 +70,26 @@ impl Window {
         }
     }
 
-    /// Push a frame to the back of the window
+    /// Push a frame to the back of the window and start a timer to resend it
+    /// if needed.
+    ///
+    /// # Arguments
+    /// - `frame`: The frame to push to the window
+    /// - `writer_tx`: The channel the timer uses to send the frame to the writer task
+    ///
+    /// # Errors
     /// If the window is full, an error is returned
-    pub fn push(&mut self, frame: Frame) -> Result<(), WindowError> {
+    pub fn push(
+        &mut self,
+        frame: Frame,
+        writer_tx: UnboundedSender<Vec<u8>>,
+    ) -> Result<(), WindowError> {
         if self.frames.len() == self.get_max_size() {
             return Err(WindowError::Full);
         } else {
-            self.frames.push_back(frame);
+            // Run a timer to resend the frame if it is not received
+            let handle = create_frame_timer(frame.to_bytes(), writer_tx);
+            self.frames.push_back((frame, handle));
         }
 
         Ok(())
@@ -82,11 +98,16 @@ impl Window {
     /// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    pub fn pop_front(&mut self, condition: &SafeCond) -> Option<Frame> {
+    pub fn pop_front(&mut self, condition: SafeCond) -> Option<WindowElement> {
         let popped = self.frames.pop_front();
 
-        // Notify the send task that space was created in the window
-        condition.notify_one();
+        if let Some(popped) = &popped {
+            // Abort the timer task for the frame that was popped
+            popped.1.abort();
+
+            // Notify the send task that space was created in the window
+            condition.notify_one();
+        }
 
         popped
     }
@@ -98,12 +119,39 @@ impl Window {
 
     /// Check if the window contains a frame with the given number
     pub fn contains(&self, num: u8) -> bool {
-        self.frames.iter().any(|frame| frame.num == num)
+        self.frames.iter().any(|(frame, _)| frame.num == num)
     }
 
     /// Check if the window is empty
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
+    }
+
+    /// Pop a specific frame from the window.
+    ///
+    /// # Arguments
+    /// - `num`: The number of the frame to pop
+    /// - `condition`: The condition variable to notify the send task
+    ///
+    /// # Returns
+    /// The frame that was popped or `None` if the frame was not found
+    pub fn pop(&mut self, num: u8, condition: SafeCond) -> Option<WindowElement> {
+        let i = self.frames.iter().position(|(frame, _)| frame.num == num);
+        match i {
+            Some(i) => {
+                let popped = self
+                    .frames
+                    .remove(i)
+                    .expect("Frame not found, this should never happen");
+
+                // Abort the timer task for the frame that was popped
+                popped.1.abort();
+                // Notify the send task that space was created in the window
+                condition.notify_one();
+                Some(popped)
+            }
+            None => None,
+        }
     }
 
     /// Pop frames from the front of the window until the frame with the given number is reached.
@@ -112,11 +160,11 @@ impl Window {
     /// - `num`: The number of the frame to pop until
     /// - `inclusive`: If true, the frame with the given number is also popped
     /// - `condition`: The condition variable to notify the send task
-    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: &SafeCond) -> usize {
-        let initial_len = self.frames.len();
-
+    ///
+    /// Returns the number of frames popped
+    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: SafeCond) -> usize {
         // Get the index of "limit" frame in the window
-        let i = match self.frames.iter().position(|frame| frame.num == num) {
+        let i = match self.frames.iter().position(|(frame, _)| frame.num == num) {
             Some(i) => i,
             None => {
                 debug!("Frame not found in window, this means it was already acknowledged");
@@ -125,18 +173,22 @@ impl Window {
         };
 
         // Pop the frames that were acknowledged
-        if inclusive {
-            self.frames.drain(..i + 1);
+        let drained = if inclusive {
+            self.frames.drain(..i + 1)
         } else {
-            self.frames.drain(..i);
-        }
+            self.frames.drain(..i)
+        };
+
+        let drained_size = drained.len();
+
+        // Abort the timers tasks for the frames that were popped
+        drained.for_each(|(_, handle)| handle.abort());
 
         // Notify the send task that space was created in the window
         condition.notify_one();
 
-        let final_len = self.frames.len();
-
-        initial_len - final_len
+        // Return the number of frames popped
+        drained_size
     }
 }
 

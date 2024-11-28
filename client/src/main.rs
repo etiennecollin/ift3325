@@ -29,7 +29,7 @@ use std::{
 use tokio::{net::TcpStream, sync::mpsc};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, reader, writer},
+    io::{connection_request, reader, writer},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
@@ -40,6 +40,8 @@ use utils::{
 /// port number, and file path, and then calls `send_file` to send the specified file to the server.
 #[tokio::main]
 async fn main() {
+    // Tokio task debugger
+    console_subscriber::init();
     // Initialize the logger
     env_logger::builder()
         .format_module_path(false)
@@ -124,7 +126,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(100);
+    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     // Create a window to manage the frames
     let window = Arc::new(Mutex::new(Window::new()));
@@ -133,10 +135,13 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let condition = Arc::new(Condvar::new());
 
     // Spawn reader task which receives frames from the server
-    let tx_clone = tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
-    let reader = reader(read, window_clone, condition_clone, Some(tx_clone), None);
+    let reader = reader(
+        read,
+        window.clone(),
+        condition.clone(),
+        Some(tx.clone()),
+        None,
+    );
 
     // Spawn the writer task which sends frames to the server
     let writer = writer(write, rx);
@@ -144,18 +149,21 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     // =========================================================================
     // Send connection start request frame
     // =========================================================================
-    connection_request(&window, true, Some(srej), tx.clone(), &condition).await;
+    connection_request(
+        window.clone(),
+        true,
+        Some(srej),
+        tx.clone(),
+        condition.clone(),
+    )
+    .await;
 
     // =========================================================================
     // Send the file to the server
     // =========================================================================
     let tx_clone = tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
     let sender =
-        tokio::spawn(
-            async move { send_file(tx_clone, window_clone, condition_clone, file_path).await },
-        );
+        tokio::spawn(async move { send_file(tx_clone, window, condition, file_path).await });
 
     // Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -192,7 +200,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
 async fn send_file(
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
     safe_window: SafeWindow,
     condition: SafeCond,
     file_path: String,
@@ -234,28 +242,20 @@ async fn send_file(
             frame_bytes = frame.to_bytes();
 
             // Wait for the window to have space
-            while window.is_full() {
-                window = condition
-                    .wait(window)
-                    .expect("Failed to wait for condition");
-            }
+            window = condition
+                .wait_while(window, |window| window.is_full())
+                .expect("Failed to wait for condition");
 
             // Push the frame to the window
             window
-                .push(frame)
+                .push(frame, tx.clone())
                 .expect("Failed to push frame to window, this should never happen");
         }
 
         tx.send(frame_bytes)
-            .await
             .expect("Failed to send frame to writer task");
 
         info!("Sent frame {}", num);
-
-        // Run a timer to resend the frame if it is not acknowledged
-        let tx_clone = tx.clone();
-        let safe_window_clone = safe_window.clone();
-        create_frame_timer(safe_window_clone, num, tx_clone).await;
     }
 
     // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
@@ -271,7 +271,7 @@ async fn send_file(
     info!("Window is empty, all data sent");
 
     // Send disconnect frame
-    connection_request(&safe_window, false, None, tx, &condition).await;
+    connection_request(safe_window, false, None, tx, condition).await;
     Ok("Connection ended by client")
 }
 

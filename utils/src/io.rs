@@ -194,10 +194,25 @@ pub async fn handle_reception(
 pub fn writer(
     mut stream: OwnedWriteHalf,
     mut rx: mpsc::Receiver<Vec<u8>>,
+    drop_probability: f32,
+    flip_probability: f32,
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
         // Receive frames until all tx are dropped
-        while let Some(frame) = rx.recv().await {
+        while let Some(mut frame) = rx.recv().await {
+            // Drop the frame with a probability
+            if rand::random::<f32>() < drop_probability {
+                warn!("Dropping frame");
+                continue;
+            }
+
+            // Bit flip the frame with a probability
+            if rand::random::<f32>() < flip_probability {
+                warn!("Flipping bit in frame");
+                let bit = rand::random::<usize>() % frame.len() * 8;
+                frame[bit / 8] ^= 1 << (bit % 8);
+            }
+
             debug!("Sending frame {:X?}", frame);
             // Send the file contents to the server
             if stream.write_all(&frame).await.is_err() {

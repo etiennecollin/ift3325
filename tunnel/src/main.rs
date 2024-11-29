@@ -17,7 +17,8 @@
 //! probability of dropping a frame, and `<prob_bit_flip>` by the probability
 //! of flipping a bit in a frame.
 //!
-//! The frobabilities are givven as floating point numbers between 0 and 1.
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 use env_logger::TimestampPrecision;
 use log::{debug, error, info, warn};
@@ -174,21 +175,11 @@ async fn handle_connection(
     let (server_read, server_write) = server_stream.into_split();
 
     // Generate writer tasks
-    let client_writer = writer(client_write, client_rx);
-    let server_writer = writer(server_write, server_rx);
+    let client_writer = writer(client_write, client_rx, drop_probability, flip_probability);
+    let server_writer = writer(server_write, server_rx, drop_probability, flip_probability);
 
-    let client_handler = handle_client(
-        client_read,
-        server_tx.clone(),
-        drop_probability,
-        flip_probability,
-    );
-    let server_handler = handle_server(
-        server_read,
-        client_tx.clone(),
-        drop_probability,
-        flip_probability,
-    );
+    let client_handler = handle_client(client_read, server_tx.clone());
+    let server_handler = handle_server(server_read, client_tx.clone());
 
     // Drop our own copies of the sender channels
     // This will allow the writer tasks to
@@ -213,8 +204,6 @@ async fn handle_connection(
 fn handle_client(
     mut client_read: OwnedReadHalf,
     server_tx: mpsc::Sender<Vec<u8>>,
-    drop_probability: f32,
-    flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
     tokio::spawn(async move {
         loop {
@@ -236,22 +225,6 @@ fn handle_client(
             }
 
             // =====================================================================
-            // Perturb the frame
-            // =====================================================================
-            // Drop the frame with a probability
-            if rand::random::<f32>() < drop_probability {
-                warn!("Dropping client frame");
-                continue;
-            }
-
-            // Bit flip the frame with a probability
-            if rand::random::<f32>() < flip_probability {
-                warn!("Flipping bit in client frame");
-                let bit = rand::random::<usize>() % read_length * 8;
-                from_client[bit / 8] ^= 1 << (bit % 8);
-            }
-
-            // =====================================================================
             // Send the frame to server
             // =====================================================================
             debug!("Sending frame to server");
@@ -270,8 +243,6 @@ fn handle_client(
 fn handle_server(
     mut server_read: OwnedReadHalf,
     client_tx: mpsc::Sender<Vec<u8>>,
-    drop_probability: f32,
-    flip_probability: f32,
 ) -> JoinHandle<Result<(), &'static str>> {
     tokio::spawn(async move {
         loop {
@@ -290,22 +261,6 @@ fn handle_server(
             if read_length == 0 {
                 warn!("Server closed the connection");
                 return Ok(());
-            }
-
-            // =====================================================================
-            // Perturb the frame
-            // =====================================================================
-            // Drop the frame with a probability
-            if rand::random::<f32>() < drop_probability {
-                warn!("Dropping server frame");
-                continue;
-            }
-
-            // Bit flip the frame with a probability
-            if rand::random::<f32>() < flip_probability {
-                warn!("Flipping bit in server frame");
-                let bit = rand::random::<usize>() % read_length * 8;
-                from_server[bit / 8] ^= 1 << (bit % 8);
             }
 
             // =====================================================================

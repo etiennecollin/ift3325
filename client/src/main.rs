@@ -9,23 +9,21 @@
 //! a placeholder argument:
 //!
 //! ```bash
-//! cargo run -- <address> <port> <file_path> <go_back_n>
+//! cargo run -- <server_address> <server_port> <file> <go_back_n> <prob_frame_drop> <prob_bit_flip>
 //! ```
 //!
-//! Replace `<address>` with the server's IP address (e.g., 127.0.0.1),
-//! `<port>` with the desired port number, and `<file_path>` with the path to
-//! the file you want to send.
+//! Replace `<server_address>` with the server's IP address (e.g., 127.0.0.1),
+//! `<server_port>` with the server's port number, `<file_path>` with the path to
+//! the file to be sent, and `<go_back_n>` with 0 to use the go-back-N
+//! protocol, `prob_frame_drop` with the probability of dropping a frame, and
+//! `prob_bit_flip` with the probability of flipping a bit in a frame.
+//!
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 use env_logger::TimestampPrecision;
 use log::{debug, error, info};
-use std::{
-    env,
-    fs::File,
-    io::Read,
-    net::SocketAddr,
-    process::exit,
-    sync::{Arc, Condvar, Mutex},
-};
+use std::{env, fs::File, io::Read, net::SocketAddr, process::exit};
 use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use utils::{
     frame::{Frame, FrameType},
@@ -36,12 +34,10 @@ use utils::{
 
 /// The main function that initializes the client.
 ///
-/// This function sets up logging, processes command-line arguments to extract the server address,
-/// port number, and file path, and then calls `send_file` to send the specified file to the server.
-#[tokio::main(flavor = "multi_thread", worker_threads = 3)]
+/// This function sets up logging, processes command-line arguments and sends
+/// the specified file to the server.
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    // Tokio task debugger
-    console_subscriber::init();
     // Initialize the logger
     env_logger::builder()
         .format_module_path(false)
@@ -54,9 +50,9 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     // Check if the right number of arguments were provided
-    if args.len() != 5 {
+    if args.len() != 7 {
         error!(
-            "Usage: {} <server_address> <server_port> <file> <0>",
+            "Usage: {} <server_address> <server_port> <file> <go_back_n> <prob_frame_drop> <prob_bit_flip>",
             args[0]
         );
         exit(1);
@@ -94,6 +90,24 @@ async fn main() {
         }
     };
 
+    // Parse the drop probability
+    let drop_probability: f32 = match args[5].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid drop probability: {}", args[5]);
+            exit(1);
+        }
+    };
+
+    // Parse the flip probability
+    let flip_probability: f32 = match args[6].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid flip probability: {}", args[6]);
+            exit(1);
+        }
+    };
+
     // Connect to server
     let stream = match TcpStream::connect(socket_addr).await {
         Ok(stream) => {
@@ -106,7 +120,7 @@ async fn main() {
         }
     };
 
-    setup_connection(stream, srej, file_path).await;
+    setup_connection(stream, srej, file_path, drop_probability, flip_probability).await;
 }
 
 /// Sets up the connection with the server.
@@ -116,7 +130,13 @@ async fn main() {
 /// It also handles resending frames in case of a timeout.
 ///
 /// The function returns when all data has been sent.
-async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
+async fn setup_connection(
+    stream: TcpStream,
+    srej: u8,
+    file_path: String,
+    drop_probability: f32,
+    flip_probability: f32,
+) {
     // =========================================================================
     // Setup the reader and writer tasks
     // =========================================================================
@@ -142,7 +162,7 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     );
 
     // Spawn the writer task which sends frames to the server
-    let writer = writer(write, rx);
+    let writer = writer(write, rx, drop_probability, flip_probability);
 
     // =========================================================================
     // Send connection start request frame

@@ -1,10 +1,10 @@
 @startuml
 'skinparam linetype polyline
-skinparam nodesep 150
-skinparam ranksep 100
+'skinparam nodesep 150
+'skinparam ranksep 100
 
 class  "<<struct>>\nClient" as Client{
-  - async setup_connection(stream: TcpStream, srej: u8,file_path: String) 
+  - async setup_connection(stream: TcpStream, srej: u8,file_path: String,drop_probability: f32, flip_probability: f32) 
   - async send_file(tx: mpsc::Sender<Vec<u8>>, file_path: String) : Result<&'static str, &'static str>
 }
 
@@ -13,6 +13,7 @@ class  "<<struct>>\nServer" as Server{
   - async assembler(mut assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) : Result<&'static str, &'static str>
 }
 
+/'
   class "<<struct>>\nTunnel" as Tunnel {
   - handle_connection(client_stream: TcpStream, server_stream: TcpStream,drop_probability: f32, flip_probability: f32)
   - transmit(data: &[u8]): Result<(), Error>
@@ -20,6 +21,7 @@ class  "<<struct>>\nServer" as Server{
   - corrupt_frame(frame: Frame) : Result<Frame, Error>
   - drop_frame(frame: Frame) : Result<(), Error>
 }
+'/
 
 enum FrameType {
   Information : u8
@@ -92,7 +94,7 @@ enum WindowError {
   annotation "<<package>>\nIO" as IO {
     + connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
     + reader(stream: OwnedReadHalf, window: SafeWindow, condition: SafeCond, writer_tx: Option<mpsc::Sender<Vec<u8>>>, assembler_tx: Option<mpsc::Sender<Vec<u8>>>) : JoinHandle<Result<&'static str, &'static str>>
-    + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>) : JoinHandle<Result<&'static str, &'static str>>
+    + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>, drop_probability: f32,flip_probability: f32) :JoinHandle<Result<&'static str, &'static str>>
     + handle_reception(frame: Frame, safe_window: &SafeWindow, condition: &SafeCond, writer_tx: Option<&mpsc::Sender<Vec<u8>>, assembler_tx: Option<&mpsc::Sender<Vec<u8>>, expected_info_num: &mut u8) : bool
     + create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>)
     }
@@ -118,10 +120,14 @@ annotation "<<package>>\nByteStuffing" as ByteStuffing {
     }
 
 
-Client --> Tunnel : "reçoit les \nframes du client"
-Tunnel --> Client : "envoie les \nframes du serveur"
-Server --> Tunnel : "reçoit les \nframes du serveur" 
-Tunnel --> Server : "envoie les \nframes du client "
+
+'Client --> Tunnel : "reçoit les \nframes du client"
+'Tunnel --> Client : "envoie les \nframes du serveur"
+'Server --> Tunnel : "reçoit les \nframes du serveur" 
+'Tunnel --> Server : "envoie les \nframes du client "
+
+Client --> Server : "envoie les \nframes du client" 
+Server --> Client : "envoie les \nframes du serveur" 
 
 Frame --> FrameType : utilise
 Frame --> FrameError : utilise
@@ -137,12 +143,12 @@ Frame --> CRC : utilise
 Frame --> ByteStuffing : utilise
 
 
-Tunnel --> Frame : "corromps\net ou \ndétruit\nou ne fait rien"
+'Tunnel --> Frame : "corromps\net ou \ndétruit\nou ne fait rien"
 'Tunnel -l> Frame : "corromps et ou détruit ou ne fait rien"
 
 
 
-Tunnel --> IO : utilise 
+'Tunnel --> IO : utilise 
 Client --> IO : utilise 
 Server --> IO : utilise
 
@@ -150,7 +156,7 @@ IO --> FrameHandler : utilise
 
 Client --> Misc : utilise 
 Server --> Misc : utilise
-Tunnel --> Misc : utilise
+'Tunnel --> Misc : utilise
 
 /'
 Utils --|> ByteStuffing : contient

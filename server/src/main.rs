@@ -8,19 +8,19 @@
 //! To run the server, specify a port number as a command-line argument:
 //!
 //! ```bash
-//! cargo run -- <port_number>
+//! cargo run -- <port_number> <prob_frame_drop> <prob_bit_flip>
 //! ```
 //!
-//! Replace `<port_number>` with the desired port number (e.g., 8080).
+//! Replace `<port_number>` with the desired port number for the server, `<prob_frame_drop>`
+//! with the probability of dropping a frame, and `<prob_bit_flip>` with the probability of
+//! flipping a bit in a frame.
+//!
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 use env_logger::TimestampPrecision;
 use log::{error, info};
-use std::{
-    env,
-    net::SocketAddr,
-    process::exit,
-    sync::{Arc, Condvar, Mutex},
-};
+use std::{env, net::SocketAddr, process::exit};
 use tokio::{
     fs::{create_dir_all, File},
     io::AsyncWriteExt,
@@ -29,18 +29,19 @@ use tokio::{
     task,
 };
 use utils::{
-    io::{reader, writer},
+    io::{reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
-    window::Window,
+    window::{SafeCond, SafeWindow},
 };
 
 const OUTPUT_DIR: &str = "./output";
 
 /// The main function that initializes the server.
 ///
-/// This function sets up the logging, parses the command-line arguments to get the port number,
-/// binds to the specified address and port, and enters a loop to accept client connections.
-#[tokio::main]
+/// This function sets up the logging, parses the command-line arguments,
+/// binds to the specified address and port, and enters a loop to accept client
+/// connections.
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -54,8 +55,11 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     // Check if the right number of arguments were provided
-    if args.len() != 2 {
-        error!("Usage: {} <port_number>", args[0]);
+    if args.len() != 4 {
+        error!(
+            "Usage: {} <port_number> <prob_frame_drop> <prob_bit_flip>",
+            args[0]
+        );
         exit(1);
     }
 
@@ -64,6 +68,24 @@ async fn main() {
         Ok(num) => num,
         Err(_) => {
             error!("Invalid port number: {}", args[1]);
+            exit(1);
+        }
+    };
+
+    // Parse the drop probability
+    let drop_probability: f32 = match args[2].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid drop probability: {}", args[2]);
+            exit(1);
+        }
+    };
+
+    // Parse the flip probability
+    let flip_probability: f32 = match args[3].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid flip probability: {}", args[3]);
             exit(1);
         }
     };
@@ -87,7 +109,14 @@ async fn main() {
                 info!("New client: {:?}", client_addr);
                 task::spawn(async move {
                     // Handle the client
-                    let status = match handle_client(stream, client_addr).await {
+                    let status = match handle_client(
+                        stream,
+                        client_addr,
+                        drop_probability,
+                        flip_probability,
+                    )
+                    .await
+                    {
                         Ok(status) => status,
                         Err(e) => {
                             error!("Failed to handle client: {}", e);
@@ -122,36 +151,37 @@ async fn main() {
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
 /// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
-async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<bool, &'static str> {
+async fn handle_client(
+    stream: TcpStream,
+    addr: SocketAddr,
+    drop_probability: f32,
+    flip_probability: f32,
+) -> Result<bool, &'static str> {
     // Split the stream into read and write halves
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
     // Create channel to reassemble frames
-    let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(100);
+    let (assembler_tx, assembler_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
-    let write_tx_clone = write_tx.clone();
-    let assembler_tx_clone = assembler_tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
     let reader = reader(
         read,
-        window_clone,
-        condition_clone,
-        Some(write_tx_clone),
-        Some(assembler_tx_clone),
+        window.clone(),
+        condition.clone(),
+        Some(write_tx.clone()),
+        Some(assembler_tx.clone()),
     );
 
     // Spawn the writer task which sends frames to the server
-    let writer = writer(write, write_rx);
+    let writer = writer(write, write_rx, drop_probability, flip_probability);
 
     // Spawn the assembler task which reassembles frames
     let assembler = tokio::spawn(async move { assembler(assembler_rx, addr).await });
@@ -186,10 +216,13 @@ async fn assembler(
         data.extend_from_slice(&frame_data);
     }
 
+    // Close the receiver channel
+    assembler_rx.close();
+
     // Parse the data as a UTF-8 string
     let data_str = String::from_utf8_lossy(&data);
     let data_trimmed = data_str.trim();
-    info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
+    // info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
     // Create the output directory if it does not exist
     create_dir_all(OUTPUT_DIR)
@@ -197,7 +230,7 @@ async fn assembler(
         .expect("Failed to create output directory");
 
     // Save the data to a file
-    let filepath = format!("{}/client_{}.txt", OUTPUT_DIR, addr);
+    let filepath = format!("{}/out_{}.txt", OUTPUT_DIR, addr.port());
     let mut file = File::create(&filepath)
         .await
         .expect("Failed to create test file");

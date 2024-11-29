@@ -6,4 +6,5 @@ authors = ["Etienne Collin <contact@etiennecollin.com>", "Emeric Laberge <emeric
 
 [dependencies]
 log = "0.4.22"
+rand = "0.8.5"
 tokio = { version = "1.41.1", features = ["io-util", "net", "rt", "sync", "time"] }

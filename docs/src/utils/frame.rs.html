@@ -398,12 +398,6 @@
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The frame module contains the Frame struct, the FrameType enum and the
 //! FrameError enum.
 //!
@@ -427,7 +421,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>FrameError {
     InvalidFrameType(u8),
-    InvalidFCS(u16),
+    InvalidFCS,
     InvalidLength(usize),
     MissingBoundaryFlag,
     AbortSequenceReceived,
@@ -512,20 +506,20 @@
     <span class="doccomment">/// Replace an escaped byte by computing the XOR between the byte and this byte
     </span><span class="kw">pub const </span>REPLACEMENT_POSITION: u8 = <span class="number">0x20</span>;
     <span class="doccomment">/// The maximum size of the data field in bytes
-    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">64</span>; <span class="comment">// 64kB
-                                         // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
+    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">1024</span>; <span class="comment">// 1kB
+                                           // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     </span><span class="doccomment">/// The size of a frame in bytes
     ///
     /// The frame is encoded as follows:
     /// - 1 byte: boundary flag
-    /// - Content
+    /// - Content (2x since each byte could be stuffed and escaped)
     ///     - 1 byte: frame_type
     ///     - 1 byte: num
     ///     - n bytes: data
     ///     - 2 bytes: fcs stored as big-endian
     /// - 1 byte: boundary flag
-    </span><span class="kw">pub const </span>MAX_SIZE: usize = <span class="number">6 </span>+ <span class="self">Self</span>::MAX_SIZE_DATA;
+    </span><span class="kw">pub const </span>MAX_SIZE: usize = <span class="number">2 </span>+ <span class="number">2 </span>* (<span class="number">4 </span>+ <span class="self">Self</span>::MAX_SIZE_DATA);
 
     <span class="doccomment">/// Create a new frame
     /// # Parameters
@@ -617,30 +611,24 @@
         <span class="comment">// Destuff the frame content
         </span><span class="kw">let </span>content = byte_destuffing(bytes)<span class="question-mark">?</span>;
 
+        <span class="comment">// Check that the FCS matches the CRC
+        </span><span class="kw">let </span>checksum = crc_16_ccitt(<span class="kw-2">&amp;</span>content);
+        <span class="kw">if </span>checksum != <span class="number">0 </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFCS);
+        }
+
         <span class="comment">// Extract the frame information
-        </span><span class="kw">let </span>frame_type = content[<span class="number">0</span>];
+        </span><span class="kw">let </span>frame_type = <span class="kw">match </span>FrameType::from(content[<span class="number">0</span>]) {
+            FrameType::Unknown =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFrameType(content[<span class="number">0</span>])),
+            frame_type =&gt; frame_type,
+        };
+
         <span class="kw">let </span>num = content[<span class="number">1</span>];
         <span class="kw">let </span>data = content[<span class="number">2</span>..content.len() - <span class="number">2</span>].to_vec();
         <span class="kw">let </span>fcs = u16::from_be_bytes([content[content.len() - <span class="number">2</span>], content[content.len() - <span class="number">1</span>]]);
 
-        <span class="comment">// Check that the FCS matches the CRC
-        </span><span class="kw">let </span><span class="kw-2">mut </span>frame_content = <span class="macro">vec!</span>[frame_type, num];
-        frame_content.append(<span class="kw-2">&amp;mut </span>data.clone());
-        <span class="kw">let </span>expected_fcs = crc_16_ccitt(<span class="kw-2">&amp;</span>frame_content);
-
-        <span class="comment">// We could check that the CRC of fame_type, num, data and fcs is 0,
-        // but it requires a second CRC and is not necessary
-        </span><span class="kw">if </span>fcs != expected_fcs {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFCS(fcs));
-        }
-
-        <span class="comment">// Create the frame contenta
-        </span><span class="kw">let </span>frame_type = <span class="kw">match </span>FrameType::from(frame_type) {
-            FrameType::Unknown =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(FrameError::InvalidFrameType(frame_type)),
-            frame_type =&gt; frame_type,
-        };
-
-        <span class="kw">let </span><span class="kw-2">mut </span>frame = Frame::new(frame_type, num, data);
+        <span class="comment">// Create the frame content
+        </span><span class="kw">let </span><span class="kw-2">mut </span>frame = Frame::new(frame_type, num, data);
         frame.fcs = <span class="prelude-val">Some</span>(fcs);
         frame.content = <span class="prelude-val">Some</span>(content);
         frame.content_stuffed = <span class="prelude-val">Some</span>(bytes.to_vec());

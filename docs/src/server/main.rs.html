@@ -280,6 +280,39 @@
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
@@ -290,19 +323,19 @@
 //! To run the server, specify a port number as a command-line argument:
 //!
 //! ```bash
-//! cargo run -- &lt;port_number&gt;
+//! cargo run -- &lt;port_number&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;
 //! ```
 //!
-//! Replace `&lt;port_number&gt;` with the desired port number (e.g., 8080).
+//! Replace `&lt;port_number&gt;` with the desired port number for the server, `&lt;prob_frame_drop&gt;`
+//! with the probability of dropping a frame, and `&lt;prob_bit_flip&gt;` with the probability of
+//! flipping a bit in a frame.
+//!
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 </span><span class="kw">use </span>env_logger::TimestampPrecision;
 <span class="kw">use </span>log::{error, info};
-<span class="kw">use </span>std::{
-    env,
-    net::SocketAddr,
-    process::exit,
-    sync::{Arc, Condvar, Mutex},
-};
+<span class="kw">use </span>std::{env, net::SocketAddr, process::exit};
 <span class="kw">use </span>tokio::{
     fs::{create_dir_all, File},
     io::AsyncWriteExt,
@@ -311,18 +344,19 @@
     task,
 };
 <span class="kw">use </span>utils::{
-    io::{reader, writer},
+    io::{reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
-    window::Window,
+    window::{SafeCond, SafeWindow},
 };
 
 <span class="kw">const </span>OUTPUT_DIR: <span class="kw-2">&amp;</span>str = <span class="string">"./output"</span>;
 
 <span class="doccomment">/// The main function that initializes the server.
 ///
-/// This function sets up the logging, parses the command-line arguments to get the port number,
-/// binds to the specified address and port, and enters a loop to accept client connections.
-</span><span class="attr">#[tokio::main]
+/// This function sets up the logging, parses the command-line arguments,
+/// binds to the specified address and port, and enters a loop to accept client
+/// connections.
+</span><span class="attr">#[tokio::main(flavor = <span class="string">"multi_thread"</span>, worker_threads = <span class="number">4</span>)]
 </span><span class="kw">async fn </span>main() {
     <span class="comment">// Initialize the logger
     </span>env_logger::builder()
@@ -336,8 +370,11 @@
     </span><span class="kw">let </span>args: Vec&lt;String&gt; = env::args().collect();
 
     <span class="comment">// Check if the right number of arguments were provided
-    </span><span class="kw">if </span>args.len() != <span class="number">2 </span>{
-        <span class="macro">error!</span>(<span class="string">"Usage: {} &lt;port_number&gt;"</span>, args[<span class="number">0</span>]);
+    </span><span class="kw">if </span>args.len() != <span class="number">4 </span>{
+        <span class="macro">error!</span>(
+            <span class="string">"Usage: {} &lt;port_number&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;"</span>,
+            args[<span class="number">0</span>]
+        );
         exit(<span class="number">1</span>);
     }
 
@@ -346,6 +383,24 @@
         <span class="prelude-val">Ok</span>(num) =&gt; num,
         <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
             <span class="macro">error!</span>(<span class="string">"Invalid port number: {}"</span>, args[<span class="number">1</span>]);
+            exit(<span class="number">1</span>);
+        }
+    };
+
+    <span class="comment">// Parse the drop probability
+    </span><span class="kw">let </span>drop_probability: f32 = <span class="kw">match </span>args[<span class="number">2</span>].parse() {
+        <span class="prelude-val">Ok</span>(num) =&gt; num,
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+            <span class="macro">error!</span>(<span class="string">"Invalid drop probability: {}"</span>, args[<span class="number">2</span>]);
+            exit(<span class="number">1</span>);
+        }
+    };
+
+    <span class="comment">// Parse the flip probability
+    </span><span class="kw">let </span>flip_probability: f32 = <span class="kw">match </span>args[<span class="number">3</span>].parse() {
+        <span class="prelude-val">Ok</span>(num) =&gt; num,
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+            <span class="macro">error!</span>(<span class="string">"Invalid flip probability: {}"</span>, args[<span class="number">3</span>]);
             exit(<span class="number">1</span>);
         }
     };
@@ -369,7 +424,14 @@
                 </span><span class="macro">info!</span>(<span class="string">"New client: {:?}"</span>, client_addr);
                 task::spawn(<span class="kw">async move </span>{
                     <span class="comment">// Handle the client
-                    </span><span class="kw">let </span>status = <span class="kw">match </span>handle_client(stream, client_addr).<span class="kw">await </span>{
+                    </span><span class="kw">let </span>status = <span class="kw">match </span>handle_client(
+                        stream,
+                        client_addr,
+                        drop_probability,
+                        flip_probability,
+                    )
+                    .<span class="kw">await
+                    </span>{
                         <span class="prelude-val">Ok</span>(status) =&gt; status,
                         <span class="prelude-val">Err</span>(e) =&gt; {
                             <span class="macro">error!</span>(<span class="string">"Failed to handle client: {}"</span>, e);
@@ -404,36 +466,37 @@
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
 /// `Ok(false)` if the connection was closed by the client, or an `Err` if an error occurred.
-</span><span class="kw">async fn </span>handle_client(stream: TcpStream, addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;bool, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
+</span><span class="kw">async fn </span>handle_client(
+    stream: TcpStream,
+    addr: SocketAddr,
+    drop_probability: f32,
+    flip_probability: f32,
+) -&gt; <span class="prelude-ty">Result</span>&lt;bool, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
     <span class="comment">// Split the stream into read and write halves
     </span><span class="kw">let </span>(read, write) = stream.into_split();
 
     <span class="comment">// Create channel for tasks to send data to write to writer task
-    </span><span class="kw">let </span>(write_tx, write_rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">100</span>);
+    </span><span class="kw">let </span>(write_tx, write_rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(CHANNEL_CAPACITY);
     <span class="comment">// Create channel to reassemble frames
-    </span><span class="kw">let </span>(assembler_tx, assembler_rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">100</span>);
+    </span><span class="kw">let </span>(assembler_tx, assembler_rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(CHANNEL_CAPACITY);
 
     <span class="comment">// Create a window to manage the frames
-    </span><span class="kw">let </span>window = Arc::new(Mutex::new(Window::new()));
+    </span><span class="kw">let </span>window = SafeWindow::default();
 
     <span class="comment">// Create a condition to signal the send task that space is available in the window
-    </span><span class="kw">let </span>condition = Arc::new(Condvar::new());
+    </span><span class="kw">let </span>condition = SafeCond::default();
 
     <span class="comment">// Spawn reader task which receives frames from the server
-    </span><span class="kw">let </span>write_tx_clone = write_tx.clone();
-    <span class="kw">let </span>assembler_tx_clone = assembler_tx.clone();
-    <span class="kw">let </span>window_clone = window.clone();
-    <span class="kw">let </span>condition_clone = condition.clone();
-    <span class="kw">let </span>reader = reader(
+    </span><span class="kw">let </span>reader = reader(
         read,
-        window_clone,
-        condition_clone,
-        <span class="prelude-val">Some</span>(write_tx_clone),
-        <span class="prelude-val">Some</span>(assembler_tx_clone),
+        window.clone(),
+        condition.clone(),
+        <span class="prelude-val">Some</span>(write_tx.clone()),
+        <span class="prelude-val">Some</span>(assembler_tx.clone()),
     );
 
     <span class="comment">// Spawn the writer task which sends frames to the server
-    </span><span class="kw">let </span>writer = writer(write, write_rx);
+    </span><span class="kw">let </span>writer = writer(write, write_rx, drop_probability, flip_probability);
 
     <span class="comment">// Spawn the assembler task which reassembles frames
     </span><span class="kw">let </span>assembler = tokio::spawn(<span class="kw">async move </span>{ assembler(assembler_rx, addr).<span class="kw">await </span>});
@@ -468,18 +531,21 @@
         data.extend_from_slice(<span class="kw-2">&amp;</span>frame_data);
     }
 
+    <span class="comment">// Close the receiver channel
+    </span>assembler_rx.close();
+
     <span class="comment">// Parse the data as a UTF-8 string
     </span><span class="kw">let </span>data_str = String::from_utf8_lossy(<span class="kw-2">&amp;</span>data);
     <span class="kw">let </span>data_trimmed = data_str.trim();
-    <span class="macro">info!</span>(<span class="string">"Received data from: {:?}:\r\n{}"</span>, addr, data_trimmed);
+    <span class="comment">// info!("Received data from: {:?}:\r\n{}", addr, data_trimmed);
 
-    <span class="comment">// Create the output directory if it does not exist
+    // Create the output directory if it does not exist
     </span>create_dir_all(OUTPUT_DIR)
         .<span class="kw">await
         </span>.expect(<span class="string">"Failed to create output directory"</span>);
 
     <span class="comment">// Save the data to a file
-    </span><span class="kw">let </span>filepath = <span class="macro">format!</span>(<span class="string">"{}/client_{}.txt"</span>, OUTPUT_DIR, addr);
+    </span><span class="kw">let </span>filepath = <span class="macro">format!</span>(<span class="string">"{}/out_{}.txt"</span>, OUTPUT_DIR, addr.port());
     <span class="kw">let </span><span class="kw-2">mut </span>file = File::create(<span class="kw-2">&amp;</span>filepath)
         .<span class="kw">await
         </span>.expect(<span class="string">"Failed to create test file"</span>);

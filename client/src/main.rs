@@ -9,36 +9,34 @@
 //! a placeholder argument:
 //!
 //! ```bash
-//! cargo run -- <address> <port> <file_path> <go_back_n>
+//! cargo run -- <server_address> <server_port> <file> <go_back_n> <prob_frame_drop> <prob_bit_flip>
 //! ```
 //!
-//! Replace `<address>` with the server's IP address (e.g., 127.0.0.1),
-//! `<port>` with the desired port number, and `<file_path>` with the path to
-//! the file you want to send.
+//! Replace `<server_address>` with the server's IP address (e.g., 127.0.0.1),
+//! `<server_port>` with the server's port number, `<file_path>` with the path to
+//! the file to be sent, and `<go_back_n>` with 0 to use the go-back-N
+//! protocol, `prob_frame_drop` with the probability of dropping a frame, and
+//! `prob_bit_flip` with the probability of flipping a bit in a frame.
+//!
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 use env_logger::TimestampPrecision;
-use log::{error, info};
-use std::{
-    env,
-    fs::File,
-    io::Read,
-    net::SocketAddr,
-    process::exit,
-    sync::{Arc, Condvar, Mutex},
-};
-use tokio::{net::TcpStream, sync::mpsc};
+use log::{debug, error, info};
+use std::{env, fs::File, io::Read, net::SocketAddr, process::exit};
+use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 use utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, reader, writer},
+    io::{connection_request, reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
 
 /// The main function that initializes the client.
 ///
-/// This function sets up logging, processes command-line arguments to extract the server address,
-/// port number, and file path, and then calls `send_file` to send the specified file to the server.
-#[tokio::main]
+/// This function sets up logging, processes command-line arguments and sends
+/// the specified file to the server.
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     // Initialize the logger
     env_logger::builder()
@@ -52,9 +50,9 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     // Check if the right number of arguments were provided
-    if args.len() != 5 {
+    if args.len() != 7 {
         error!(
-            "Usage: {} <server_address> <server_port> <file> <0>",
+            "Usage: {} <server_address> <server_port> <file> <go_back_n> <prob_frame_drop> <prob_bit_flip>",
             args[0]
         );
         exit(1);
@@ -92,6 +90,24 @@ async fn main() {
         }
     };
 
+    // Parse the drop probability
+    let drop_probability: f32 = match args[5].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid drop probability: {}", args[5]);
+            exit(1);
+        }
+    };
+
+    // Parse the flip probability
+    let flip_probability: f32 = match args[6].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            error!("Invalid flip probability: {}", args[6]);
+            exit(1);
+        }
+    };
+
     // Connect to server
     let stream = match TcpStream::connect(socket_addr).await {
         Ok(stream) => {
@@ -104,9 +120,7 @@ async fn main() {
         }
     };
 
-    setup_connection(stream, srej, file_path).await;
-
-    exit(0);
+    setup_connection(stream, srej, file_path, drop_probability, flip_probability).await;
 }
 
 /// Sets up the connection with the server.
@@ -116,7 +130,13 @@ async fn main() {
 /// It also handles resending frames in case of a timeout.
 ///
 /// The function returns when all data has been sent.
-async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
+async fn setup_connection(
+    stream: TcpStream,
+    srej: u8,
+    file_path: String,
+    drop_probability: f32,
+    flip_probability: f32,
+) {
     // =========================================================================
     // Setup the reader and writer tasks
     // =========================================================================
@@ -124,38 +144,42 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
     let (read, write) = stream.into_split();
 
     // Create channel for tasks to send data to write to writer task
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(100);
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Create a window to manage the frames
-    let window = Arc::new(Mutex::new(Window::new()));
+    let window = SafeWindow::default();
 
     // Create a condition to signal the send task that space is available in the window
-    let condition = Arc::new(Condvar::new());
+    let condition = SafeCond::default();
 
     // Spawn reader task which receives frames from the server
-    let tx_clone = tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
-    let reader = reader(read, window_clone, condition_clone, Some(tx_clone), None);
+    let reader = reader(
+        read,
+        window.clone(),
+        condition.clone(),
+        Some(tx.clone()),
+        None,
+    );
 
     // Spawn the writer task which sends frames to the server
-    let writer = writer(write, rx);
+    let writer = writer(write, rx, drop_probability, flip_probability);
 
     // =========================================================================
     // Send connection start request frame
     // =========================================================================
-    connection_request(&window, true, Some(srej), tx.clone(), &condition).await;
+    connection_request(
+        window.clone(),
+        true,
+        Some(srej),
+        tx.clone(),
+        condition.clone(),
+    )
+    .await;
 
     // =========================================================================
     // Send the file to the server
     // =========================================================================
-    let tx_clone = tx.clone();
-    let window_clone = window.clone();
-    let condition_clone = condition.clone();
-    let sender =
-        tokio::spawn(
-            async move { send_file(tx_clone, window_clone, condition_clone, file_path).await },
-        );
+    let sender = send_file(tx.clone(), window.clone(), condition.clone(), file_path);
 
     // Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -191,88 +215,92 @@ async fn setup_connection(stream: TcpStream, srej: u8, file_path: String) {
 /// - The condition cannot be waited on.
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
-async fn send_file(
+fn send_file(
     tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,
     condition: SafeCond,
     file_path: String,
-) -> Result<&'static str, &'static str> {
-    // Open the file
-    let mut file = match File::open(&file_path) {
-        Ok(file) => {
-            info!("Opened file: {}", file_path);
-            file
-        }
-        Err(e) => {
-            error!("Failed to open file: {}", e);
+) -> JoinHandle<Result<&'static str, &'static str>> {
+    tokio::spawn(async move {
+        // Open the file
+        let mut file = match File::open(&file_path) {
+            Ok(file) => {
+                info!("Opened file: {}", file_path);
+                file
+            }
+            Err(e) => {
+                error!("Failed to open file: {}", e);
+                return Err("Failed to send file");
+            }
+        };
+
+        // Read the file contents into the buffer
+        let mut buf = Vec::new();
+        if let Err(e) = file.read_to_end(&mut buf) {
+            error!("Failed to read file contents: {}", e);
             return Err("Failed to send file");
         }
-    };
 
-    // Read the file contents into the buffer
-    let mut buf = Vec::new();
-    if let Err(e) = file.read_to_end(&mut buf) {
-        error!("Failed to read file contents: {}", e);
-        return Err("Failed to send file");
-    }
+        // Read the file in chunks and create the frames to be sent
+        let mut num: u8;
+        for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
+            let frame_bytes: Vec<u8>;
 
-    // Read the file in chunks and create the frames to be sent
-    let mut num: u8;
-    for (i, chunk) in buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
-        let frame_bytes: Vec<u8>;
+            // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
+            {
+                // Lock the window to access the frames
+                let mut window = safe_window.lock().expect("Failed to lock window");
+
+                // Get the frame number based on the chunk index and the window size
+                num = (i % Window::MAX_FRAME_NUM as usize) as u8;
+
+                // Create a new frame with the chunk data
+                let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
+                frame_bytes = frame.to_bytes();
+
+                // Wait for the window to have space
+                window = condition
+                    .wait_while(window, |window| window.is_full())
+                    .expect("Failed to wait for condition");
+
+                // Push the frame to the window
+                window
+                    .push(frame, tx.clone())
+                    .expect("Failed to push frame to window, this should never happen");
+            }
+
+            // Send the frame to the writer tas
+            tx.send(frame_bytes)
+                .await
+                .expect("Failed to send frame to writer task");
+
+            info!("Sent frame {}", num);
+        }
 
         // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
+        info!("Finished sending file contents, waiting for window to be empty");
         {
-            // Lock the window to access the frames
             let mut window = safe_window.lock().expect("Failed to lock window");
-
-            // Get the frame number based on the chunk index and the window size
-            num = (i % Window::MAX_FRAME_NUM as usize) as u8;
-
-            // Create a new frame with the chunk data
-            let frame = Frame::new(FrameType::Information, num, chunk.to_vec());
-            frame_bytes = frame.to_bytes();
-
-            // Wait for the window to have space
-            while window.is_full() {
+            while !window.is_empty() {
+                debug!(
+                    "Window still not empty: {:X?}",
+                    window
+                        .frames
+                        .iter()
+                        .map(|(f, t)| (f.num, t))
+                        .collect::<Vec<(u8, &JoinHandle<()>)>>()
+                );
                 window = condition
                     .wait(window)
                     .expect("Failed to wait for condition");
             }
-
-            // Push the frame to the window
-            window
-                .push(frame)
-                .expect("Failed to push frame to window, this should never happen");
         }
+        info!("Window is empty, all data sent");
 
-        tx.send(frame_bytes)
-            .await
-            .expect("Failed to send frame to writer task");
-
-        info!("Sent frame {}", num);
-
-        // Run a timer to resend the frame if it is not acknowledged
-        let tx_clone = tx.clone();
-        let safe_window_clone = safe_window.clone();
-        create_frame_timer(safe_window_clone, num, tx_clone).await;
-    }
-
-    // Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
-    info!("Finished sending file contents, waiting for window to be empty");
-    {
-        let mut window = safe_window.lock().expect("Failed to lock window");
-        while !window.is_empty() {
-            window = condition
-                .wait(window)
-                .expect("Failed to wait for condition");
-        }
-    }
-    info!("Window is empty, all data sent");
-
-    // Send disconnect frame
-    connection_request(&safe_window, false, None, tx, &condition).await;
-    Ok("Connection ended by client")
+        // Send disconnect frame
+        connection_request(safe_window, false, None, tx, condition).await;
+        Ok("Connection ended by client")
+    })
 }
 
 // #[cfg(test)]

@@ -338,11 +338,6 @@
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
-<a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Contains the functions to manage the IO tasks.
 
 </span><span class="kw">use crate</span>::{
@@ -359,6 +354,10 @@
     task::JoinHandle,
     time,
 };
+
+<span class="doccomment">/// The number of message the channel can hold.
+/// That channel is used for communications between threads.
+</span><span class="kw">pub const </span>CHANNEL_CAPACITY: usize = <span class="number">1024</span>;
 
 <span class="doccomment">/// Receives frames from the server and handles them.
 /// The function reads from the stream and constructs frames from the received bytes.
@@ -387,6 +386,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>next_info_frame_num: u8 = <span class="number">0</span>;
 
         <span class="kw">loop </span>{
+            <span class="macro">debug!</span>(<span class="string">"Reader locking window"</span>);
             <span class="kw">if </span>window
                 .lock()
                 .expect(<span class="string">"Failed to lock window"</span>)
@@ -395,20 +395,28 @@
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="string">"Reader task ended, sent disconnect request"</span>);
             }
 
+            <span class="macro">debug!</span>(<span class="string">"Reader waiting for data"</span>);
             <span class="comment">// Read from the stream into the buffer
             </span><span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0</span>; Frame::MAX_SIZE];
             <span class="kw">let </span>read_length = <span class="kw">match </span>stream.read(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(<span class="number">0</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="string">"Connection ended"</span>),
                 <span class="prelude-val">Ok</span>(read_length) =&gt; read_length,
                 <span class="prelude-val">Err</span>(e) =&gt; {
                     <span class="macro">error!</span>(<span class="string">"Failed to read from stream: {}"</span>, e);
                     <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Connection ended with an error"</span>);
                 }
             };
+            <span class="macro">debug!</span>(<span class="string">"Reader received {} bytes"</span>, read_length);
 
             <span class="comment">// Iterate over the received bytes
             </span><span class="kw">for </span>byte <span class="kw">in </span>buf[..read_length].iter() {
                 <span class="comment">// Check if the byte starts or ends a frame
                 </span><span class="kw">if </span><span class="kw-2">*</span>byte == Frame::BOUNDARY_FLAG {
+                    <span class="kw">if </span>frame_buf.is_empty() {
+                        <span class="macro">debug!</span>(<span class="string">"Empty frame buffer"</span>);
+                        <span class="kw">continue</span>;
+                    }
+
                     <span class="comment">// Create frame from buffer
                     </span><span class="kw">let </span>frame = <span class="kw">match </span>Frame::from_bytes(<span class="kw-2">&amp;</span>frame_buf) {
                         <span class="prelude-val">Ok</span>(frame) =&gt; frame,
@@ -420,18 +428,30 @@
                     };
 
                     <span class="comment">// Handle the frame and check if the connection should be terminated
-                    </span><span class="kw">if </span>handle_reception(
+                    </span><span class="kw">let </span>do_disconnect = handle_reception(
                         frame,
-                        <span class="kw-2">&amp;</span>window,
-                        <span class="kw-2">&amp;</span>condition,
-                        writer_tx.as_ref(),
-                        assembler_tx.as_ref(),
+                        window.clone(),
+                        condition.clone(),
+                        writer_tx.clone(),
+                        assembler_tx.clone(),
                         <span class="kw-2">&amp;mut </span>next_info_frame_num,
                     )
-                    .<span class="kw">await
-                    </span>{
+                    .<span class="kw">await</span>;
+
+                    <span class="kw">if </span>do_disconnect {
                         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="string">"Connection ended by server"</span>);
                     }
+
+                    <span class="macro">debug!</span>(
+                        <span class="string">"Window after handling: {:?}"</span>,
+                        window
+                            .lock()
+                            .expect(<span class="string">"Failed to lock window"</span>)
+                            .frames
+                            .iter()
+                            .map(|(frame, handle)| (frame.num, handle))
+                            .collect::&lt;Vec&lt;(u8, <span class="kw-2">&amp;</span>JoinHandle&lt;()&gt;)&gt;&gt;()
+                    );
 
                     <span class="comment">// Reset buffer
                     </span>frame_buf.clear();
@@ -471,28 +491,21 @@
 /// - The sender fails to send the frames
 </span><span class="kw">pub async fn </span>handle_reception(
     frame: Frame,
-    safe_window: <span class="kw-2">&amp;</span>SafeWindow,
-    condition: <span class="kw-2">&amp;</span>SafeCond,
-    writer_tx: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
-    assembler_tx: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
+    safe_window: SafeWindow,
+    condition: SafeCond,
+    writer_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
+    assembler_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
     expected_info_num: <span class="kw-2">&amp;mut </span>u8,
 ) -&gt; bool {
-    <span class="comment">// Check if the frame is an acknowledgment or a rejection
-    </span><span class="kw">let </span>writer_tx = writer_tx.expect(<span class="string">"No sender provided to handle frame rejection"</span>);
+    <span class="kw">let </span>writer_tx = writer_tx.expect(<span class="string">"No sender provided to handle frame rejection"</span>);
 
     <span class="kw">match </span>frame.frame_type.into() {
-        <span class="comment">// If it is an acknowledgment, pop the acknowledged frames from the window
-        </span>FrameType::ReceiveReady =&gt; handle_receive_ready(safe_window, <span class="kw-2">&amp;</span>frame, condition),
-
-        <span class="comment">// If it is a connection end frame, return true to stop the connection
-        </span>FrameType::ConnectionEnd =&gt; handle_connection_end(safe_window, writer_tx, condition).<span class="kw">await</span>,
-
+        FrameType::ReceiveReady =&gt; handle_receive_ready(safe_window, <span class="kw-2">&amp;</span>frame, condition),
+        FrameType::ConnectionEnd =&gt; handle_connection_end(safe_window, writer_tx, condition).<span class="kw">await</span>,
         FrameType::ConnectionStart =&gt; {
             handle_connection_start(safe_window, <span class="kw-2">&amp;</span>frame, writer_tx, condition).<span class="kw">await
         </span>}
-
         FrameType::Reject =&gt; handle_reject(safe_window, <span class="kw-2">&amp;</span>frame, writer_tx, condition).<span class="kw">await</span>,
-
         FrameType::Information =&gt; {
             <span class="kw">let </span>assembler_tx = assembler_tx.expect(<span class="string">"No sender provided to handle frame reassembly"</span>);
             handle_information(
@@ -505,8 +518,7 @@
             )
             .<span class="kw">await
         </span>}
-
-        FrameType::P =&gt; handle_p(writer_tx, expected_info_num).<span class="kw">await</span>,
+        FrameType::P =&gt; handle_p(writer_tx, <span class="kw-2">*</span>expected_info_num).<span class="kw">await</span>,
         FrameType::Unknown =&gt; <span class="bool-val">false</span>,
     }
 }
@@ -522,26 +534,44 @@
 </span><span class="kw">pub fn </span>writer(
     <span class="kw-2">mut </span>stream: OwnedWriteHalf,
     <span class="kw-2">mut </span>rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;,
+    drop_probability: f32,
+    flip_probability: f32,
 ) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
     tokio::spawn(<span class="kw">async move </span>{
         <span class="comment">// Receive frames until all tx are dropped
-        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(frame) = rx.recv().<span class="kw">await </span>{
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>frame) = rx.recv().<span class="kw">await </span>{
+            <span class="comment">// Drop the frame with a probability
+            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; drop_probability {
+                <span class="macro">warn!</span>(<span class="string">"Dropping frame"</span>);
+                <span class="kw">continue</span>;
+            }
+
+            <span class="comment">// Bit flip the frame with a probability
+            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; flip_probability {
+                <span class="macro">warn!</span>(<span class="string">"Flipping bit in frame"</span>);
+                <span class="kw">let </span>bit = rand::random::&lt;usize&gt;() % frame.len() * <span class="number">8</span>;
+                frame[bit / <span class="number">8</span>] ^= <span class="number">1 </span>&lt;&lt; (bit % <span class="number">8</span>);
+            }
+
+            <span class="macro">debug!</span>(<span class="string">"Sending frame {:X?}"</span>, frame);
             <span class="comment">// Send the file contents to the server
-            </span><span class="kw">match </span>stream.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(it) =&gt; it,
-                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to write to stream"</span>),
+            </span><span class="kw">if </span>stream.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await</span>.is_err() {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to write to stream"</span>);
             };
+
             <span class="comment">// Flush the stream to ensure the data is sent immediately
-            </span><span class="kw">match </span>stream.flush().<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(it) =&gt; it,
-                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to flush stream"</span>),
+            </span><span class="kw">if </span>(stream.flush().<span class="kw">await</span>).is_err() {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to flush stream"</span>);
             };
+            <span class="macro">info!</span>(<span class="string">"Sent frame"</span>);
         }
 
         <span class="comment">// Close the connection
         </span><span class="kw">if </span>stream.shutdown().<span class="kw">await</span>.is_err() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to close connection"</span>);
         };
+
+        rx.close();
         <span class="prelude-val">Ok</span>(<span class="string">"Closed writer"</span>)
     })
 }
@@ -553,57 +583,28 @@
 /// If the frame is not in the window, the task stops.
 ///
 /// # Arguments
-/// - `safe_window` - The window to check for the frame.
-/// - `num` - The number of the frame to check in the window.
+/// - `frame_bytes` - The bytes of the frame to send.
 /// - `tx` - The sender to send the frame if it was not acknowledged.
 ///
 /// # Panics
 /// The function will panic if:
-/// - The lock of the window fails
 /// - The sender fails to send the frame
-</span><span class="kw">pub async fn </span>create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;) {
+</span><span class="kw">pub fn </span>create_frame_timer(frame_bytes: Vec&lt;u8&gt;, tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;) -&gt; JoinHandle&lt;()&gt; {
+    <span class="macro">debug!</span>(<span class="string">"Starting frame timer for frame {}"</span>, frame_bytes[<span class="number">2</span>]);
     tokio::spawn(<span class="kw">async move </span>{
-        time::sleep(time::Duration::from_secs(Window::FRAME_TIMEOUT)).<span class="kw">await</span>;
+        <span class="macro">debug!</span>(<span class="string">"Frame timer started for frame {}"</span>, frame_bytes[<span class="number">2</span>]);
+
         <span class="kw">let </span><span class="kw-2">mut </span>interval = time::interval(time::Duration::from_secs(Window::FRAME_TIMEOUT));
         <span class="kw">loop </span>{
             interval.tick().<span class="kw">await</span>;
-            <span class="kw">let </span>frame_bytes;
 
-            <span class="comment">// Lock the window for as short a time as possible
-            </span>{
-                <span class="kw">let </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-
-                <span class="comment">// If the connection is ending, stop the task
-                </span><span class="kw">if </span>window.sent_disconnect_request {
-                    <span class="kw">return</span>;
-                }
-
-                <span class="comment">// Check if the frame is still in the window and get its bytes
-                </span><span class="kw">let </span>frame = <span class="kw">match </span>window.frames.iter().find(|frame| frame.num == num) {
-                    <span class="prelude-val">Some</span>(frame) =&gt; frame,
-                    <span class="prelude-val">None </span>=&gt; {
-                        <span class="comment">// If the frame is not in the window, it has been acknowledged and the task can stop
-                        </span><span class="macro">debug!</span>(<span class="string">"Frame {} was acked"</span>, num);
-                        <span class="macro">debug!</span>(
-                            <span class="string">"Window: {:?}"</span>,
-                            window.frames.iter().map(|f| f.num).collect::&lt;Vec&lt;u8&gt;&gt;()
-                        );
-                        <span class="kw">return</span>;
-                    }
-                };
-
-                <span class="comment">// If the connection is not established, only send connection start frames
-                </span><span class="kw">if </span>!window.is_connected &amp;&amp; frame.frame_type != FrameType::ConnectionStart.into() {
-                    <span class="kw">return</span>;
-                }
-
-                frame_bytes = frame.to_bytes();
-            }
-
-            <span class="macro">info!</span>(<span class="string">"Timeout expired, resending frame {}"</span>, num);
-            tx.send(frame_bytes).<span class="kw">await</span>.expect(<span class="string">"Failed to send frame"</span>);
+            <span class="macro">info!</span>(<span class="string">"Timeout expired, resending frame {}"</span>, frame_bytes[<span class="number">2</span>]);
+            tx.send(frame_bytes.clone())
+                .<span class="kw">await
+                </span>.expect(<span class="string">"Failed to send frame"</span>);
+            <span class="macro">debug!</span>(<span class="string">"Resent frame {}"</span>, frame_bytes[<span class="number">2</span>]);
         }
-    });
+    })
 }
 
 <span class="doccomment">/// Sends a connection request frame to the server.
@@ -626,11 +627,11 @@
 /// - The frame fails to be sent to the writer task
 /// - The condition fails to wait
 </span><span class="kw">pub async fn </span>connection_request(
-    safe_window: <span class="kw-2">&amp;</span>SafeWindow,
+    safe_window: SafeWindow,
     connection_start: bool,
     srej: <span class="prelude-ty">Option</span>&lt;u8&gt;,
     tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
-    condition: <span class="kw-2">&amp;</span>SafeCond,
+    condition: SafeCond,
 ) {
     <span class="kw">let </span>frame_type = <span class="kw">match </span>connection_start {
         <span class="bool-val">true </span>=&gt; FrameType::ConnectionStart,
@@ -646,46 +647,35 @@
     <span class="kw">let </span>request_frame = Frame::new(frame_type, srej, Vec::new());
     <span class="kw">let </span>request_frame_bytes = request_frame.to_bytes();
 
-    {
-        <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-
-        window.sent_disconnect_request = !connection_start;
-
-        <span class="comment">// Only if we start a new connection
-        </span><span class="kw">if </span>connection_start {
-            window.srej = srej == <span class="number">1</span>;
-            window
-                .push(request_frame)
-                .expect(<span class="string">"Failed to push frame to window"</span>);
-        }
-    }
-
     <span class="comment">// Send the connection request frame
-    </span>tx.send(request_frame_bytes)
+    </span>tx.send(request_frame_bytes.clone())
         .<span class="kw">await
         </span>.expect(<span class="string">"Failed to send frame to writer task"</span>);
     <span class="macro">info!</span>(<span class="string">"Sent connection request frame"</span>);
 
-    <span class="comment">// Wait for the request to be acknowledged
+    <span class="comment">// Run a timer to resend the request if it is not acknowledged
+    </span><span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
+
+    <span class="comment">// Set a flag to indicate that a disconnect request was sent or not
+    </span>window.sent_disconnect_request = !connection_start;
+
+    <span class="comment">// Only if we start a new connection
     </span><span class="kw">if </span>connection_start {
-        <span class="comment">// Run a timer to resend the request if it is not acknowledged
-        </span><span class="kw">let </span>tx_clone = tx.clone();
-        <span class="kw">let </span>window_clone = safe_window.clone();
-        create_frame_timer(window_clone, srej, tx_clone).<span class="kw">await</span>;
+        window.srej = srej == <span class="number">1</span>;
+
+        <span class="macro">debug!</span>(<span class="string">"Waiting for acknowledgment of connection request"</span>);
+
+        <span class="comment">// Create a frame timer for the connection request frame
+        </span>window
+            .push(request_frame, tx.clone())
+            .expect(<span class="string">"Failed to push frame to window"</span>);
 
         <span class="comment">// Wait for the connection to be established
-        </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-            <span class="kw">while </span>!window.is_empty() {
-                window = condition
-                    .wait(window)
-                    .expect(<span class="string">"Failed to wait for condition"</span>);
-            }
-        }
+        </span>window = condition
+            .wait_while(window, |window| !window.is_empty())
+            .expect(<span class="string">"Failed to wait for window"</span>);
     }
-    safe_window
-        .lock()
-        .expect(<span class="string">"Failed to lock window"</span>)
-        .is_connected = connection_start;
+
+    window.is_connected = connection_start;
 }
 </code></pre></div></section></main></body></html>

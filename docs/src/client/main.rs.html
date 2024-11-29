@@ -345,6 +345,34 @@
 <a href="#345" id="345">345</a>
 <a href="#346" id="346">346</a>
 <a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple TCP client for sending files to a server.
 //!
 //! This client connects to a specified TCP server and sends the contents
@@ -356,36 +384,34 @@
 //! a placeholder argument:
 //!
 //! ```bash
-//! cargo run -- &lt;address&gt; &lt;port&gt; &lt;file_path&gt; &lt;go_back_n&gt;
+//! cargo run -- &lt;server_address&gt; &lt;server_port&gt; &lt;file&gt; &lt;go_back_n&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;
 //! ```
 //!
-//! Replace `&lt;address&gt;` with the server's IP address (e.g., 127.0.0.1),
-//! `&lt;port&gt;` with the desired port number, and `&lt;file_path&gt;` with the path to
-//! the file you want to send.
+//! Replace `&lt;server_address&gt;` with the server's IP address (e.g., 127.0.0.1),
+//! `&lt;server_port&gt;` with the server's port number, `&lt;file_path&gt;` with the path to
+//! the file to be sent, and `&lt;go_back_n&gt;` with 0 to use the go-back-N
+//! protocol, `prob_frame_drop` with the probability of dropping a frame, and
+//! `prob_bit_flip` with the probability of flipping a bit in a frame.
+//!
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 </span><span class="kw">use </span>env_logger::TimestampPrecision;
-<span class="kw">use </span>log::{error, info};
-<span class="kw">use </span>std::{
-    env,
-    fs::File,
-    io::Read,
-    net::SocketAddr,
-    process::exit,
-    sync::{Arc, Condvar, Mutex},
-};
-<span class="kw">use </span>tokio::{net::TcpStream, sync::mpsc};
+<span class="kw">use </span>log::{debug, error, info};
+<span class="kw">use </span>std::{env, fs::File, io::Read, net::SocketAddr, process::exit};
+<span class="kw">use </span>tokio::{net::TcpStream, sync::mpsc, task::JoinHandle};
 <span class="kw">use </span>utils::{
     frame::{Frame, FrameType},
-    io::{connection_request, create_frame_timer, reader, writer},
+    io::{connection_request, reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
     window::{SafeCond, SafeWindow, Window},
 };
 
 <span class="doccomment">/// The main function that initializes the client.
 ///
-/// This function sets up logging, processes command-line arguments to extract the server address,
-/// port number, and file path, and then calls `send_file` to send the specified file to the server.
-</span><span class="attr">#[tokio::main]
+/// This function sets up logging, processes command-line arguments and sends
+/// the specified file to the server.
+</span><span class="attr">#[tokio::main(flavor = <span class="string">"multi_thread"</span>, worker_threads = <span class="number">4</span>)]
 </span><span class="kw">async fn </span>main() {
     <span class="comment">// Initialize the logger
     </span>env_logger::builder()
@@ -399,9 +425,9 @@
     </span><span class="kw">let </span>args: Vec&lt;String&gt; = env::args().collect();
 
     <span class="comment">// Check if the right number of arguments were provided
-    </span><span class="kw">if </span>args.len() != <span class="number">5 </span>{
+    </span><span class="kw">if </span>args.len() != <span class="number">7 </span>{
         <span class="macro">error!</span>(
-            <span class="string">"Usage: {} &lt;server_address&gt; &lt;server_port&gt; &lt;file&gt; &lt;0&gt;"</span>,
+            <span class="string">"Usage: {} &lt;server_address&gt; &lt;server_port&gt; &lt;file&gt; &lt;go_back_n&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;"</span>,
             args[<span class="number">0</span>]
         );
         exit(<span class="number">1</span>);
@@ -439,6 +465,24 @@
         }
     };
 
+    <span class="comment">// Parse the drop probability
+    </span><span class="kw">let </span>drop_probability: f32 = <span class="kw">match </span>args[<span class="number">5</span>].parse() {
+        <span class="prelude-val">Ok</span>(num) =&gt; num,
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+            <span class="macro">error!</span>(<span class="string">"Invalid drop probability: {}"</span>, args[<span class="number">5</span>]);
+            exit(<span class="number">1</span>);
+        }
+    };
+
+    <span class="comment">// Parse the flip probability
+    </span><span class="kw">let </span>flip_probability: f32 = <span class="kw">match </span>args[<span class="number">6</span>].parse() {
+        <span class="prelude-val">Ok</span>(num) =&gt; num,
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+            <span class="macro">error!</span>(<span class="string">"Invalid flip probability: {}"</span>, args[<span class="number">6</span>]);
+            exit(<span class="number">1</span>);
+        }
+    };
+
     <span class="comment">// Connect to server
     </span><span class="kw">let </span>stream = <span class="kw">match </span>TcpStream::connect(socket_addr).<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(stream) =&gt; {
@@ -451,9 +495,7 @@
         }
     };
 
-    setup_connection(stream, srej, file_path).<span class="kw">await</span>;
-
-    exit(<span class="number">0</span>);
+    setup_connection(stream, srej, file_path, drop_probability, flip_probability).<span class="kw">await</span>;
 }
 
 <span class="doccomment">/// Sets up the connection with the server.
@@ -463,7 +505,13 @@
 /// It also handles resending frames in case of a timeout.
 ///
 /// The function returns when all data has been sent.
-</span><span class="kw">async fn </span>setup_connection(stream: TcpStream, srej: u8, file_path: String) {
+</span><span class="kw">async fn </span>setup_connection(
+    stream: TcpStream,
+    srej: u8,
+    file_path: String,
+    drop_probability: f32,
+    flip_probability: f32,
+) {
     <span class="comment">// =========================================================================
     // Setup the reader and writer tasks
     // =========================================================================
@@ -471,38 +519,42 @@
     </span><span class="kw">let </span>(read, write) = stream.into_split();
 
     <span class="comment">// Create channel for tasks to send data to write to writer task
-    </span><span class="kw">let </span>(tx, rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">100</span>);
+    </span><span class="kw">let </span>(tx, rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(CHANNEL_CAPACITY);
 
     <span class="comment">// Create a window to manage the frames
-    </span><span class="kw">let </span>window = Arc::new(Mutex::new(Window::new()));
+    </span><span class="kw">let </span>window = SafeWindow::default();
 
     <span class="comment">// Create a condition to signal the send task that space is available in the window
-    </span><span class="kw">let </span>condition = Arc::new(Condvar::new());
+    </span><span class="kw">let </span>condition = SafeCond::default();
 
     <span class="comment">// Spawn reader task which receives frames from the server
-    </span><span class="kw">let </span>tx_clone = tx.clone();
-    <span class="kw">let </span>window_clone = window.clone();
-    <span class="kw">let </span>condition_clone = condition.clone();
-    <span class="kw">let </span>reader = reader(read, window_clone, condition_clone, <span class="prelude-val">Some</span>(tx_clone), <span class="prelude-val">None</span>);
+    </span><span class="kw">let </span>reader = reader(
+        read,
+        window.clone(),
+        condition.clone(),
+        <span class="prelude-val">Some</span>(tx.clone()),
+        <span class="prelude-val">None</span>,
+    );
 
     <span class="comment">// Spawn the writer task which sends frames to the server
-    </span><span class="kw">let </span>writer = writer(write, rx);
+    </span><span class="kw">let </span>writer = writer(write, rx, drop_probability, flip_probability);
 
     <span class="comment">// =========================================================================
     // Send connection start request frame
     // =========================================================================
-    </span>connection_request(<span class="kw-2">&amp;</span>window, <span class="bool-val">true</span>, <span class="prelude-val">Some</span>(srej), tx.clone(), <span class="kw-2">&amp;</span>condition).<span class="kw">await</span>;
+    </span>connection_request(
+        window.clone(),
+        <span class="bool-val">true</span>,
+        <span class="prelude-val">Some</span>(srej),
+        tx.clone(),
+        condition.clone(),
+    )
+    .<span class="kw">await</span>;
 
     <span class="comment">// =========================================================================
     // Send the file to the server
     // =========================================================================
-    </span><span class="kw">let </span>tx_clone = tx.clone();
-    <span class="kw">let </span>window_clone = window.clone();
-    <span class="kw">let </span>condition_clone = condition.clone();
-    <span class="kw">let </span>sender =
-        tokio::spawn(
-            <span class="kw">async move </span>{ send_file(tx_clone, window_clone, condition_clone, file_path).<span class="kw">await </span>},
-        );
+    </span><span class="kw">let </span>sender = send_file(tx.clone(), window.clone(), condition.clone(), file_path);
 
     <span class="comment">// Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -538,88 +590,92 @@
 /// - The condition cannot be waited on.
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
-</span><span class="kw">async fn </span>send_file(
+</span><span class="kw">fn </span>send_file(
     tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     safe_window: SafeWindow,
     condition: SafeCond,
     file_path: String,
-) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
-    <span class="comment">// Open the file
-    </span><span class="kw">let </span><span class="kw-2">mut </span>file = <span class="kw">match </span>File::open(<span class="kw-2">&amp;</span>file_path) {
-        <span class="prelude-val">Ok</span>(file) =&gt; {
-            <span class="macro">info!</span>(<span class="string">"Opened file: {}"</span>, file_path);
-            file
-        }
-        <span class="prelude-val">Err</span>(e) =&gt; {
-            <span class="macro">error!</span>(<span class="string">"Failed to open file: {}"</span>, e);
+) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
+    tokio::spawn(<span class="kw">async move </span>{
+        <span class="comment">// Open the file
+        </span><span class="kw">let </span><span class="kw-2">mut </span>file = <span class="kw">match </span>File::open(<span class="kw-2">&amp;</span>file_path) {
+            <span class="prelude-val">Ok</span>(file) =&gt; {
+                <span class="macro">info!</span>(<span class="string">"Opened file: {}"</span>, file_path);
+                file
+            }
+            <span class="prelude-val">Err</span>(e) =&gt; {
+                <span class="macro">error!</span>(<span class="string">"Failed to open file: {}"</span>, e);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to send file"</span>);
+            }
+        };
+
+        <span class="comment">// Read the file contents into the buffer
+        </span><span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = file.read_to_end(<span class="kw-2">&amp;mut </span>buf) {
+            <span class="macro">error!</span>(<span class="string">"Failed to read file contents: {}"</span>, e);
             <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to send file"</span>);
         }
-    };
 
-    <span class="comment">// Read the file contents into the buffer
-    </span><span class="kw">let </span><span class="kw-2">mut </span>buf = Vec::new();
-    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = file.read_to_end(<span class="kw-2">&amp;mut </span>buf) {
-        <span class="macro">error!</span>(<span class="string">"Failed to read file contents: {}"</span>, e);
-        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Failed to send file"</span>);
-    }
+        <span class="comment">// Read the file in chunks and create the frames to be sent
+        </span><span class="kw">let </span><span class="kw-2">mut </span>num: u8;
+        <span class="kw">for </span>(i, chunk) <span class="kw">in </span>buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
+            <span class="kw">let </span>frame_bytes: Vec&lt;u8&gt;;
 
-    <span class="comment">// Read the file in chunks and create the frames to be sent
-    </span><span class="kw">let </span><span class="kw-2">mut </span>num: u8;
-    <span class="kw">for </span>(i, chunk) <span class="kw">in </span>buf.chunks(Frame::MAX_SIZE_DATA).enumerate() {
-        <span class="kw">let </span>frame_bytes: Vec&lt;u8&gt;;
+            <span class="comment">// Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
+            </span>{
+                <span class="comment">// Lock the window to access the frames
+                </span><span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
+
+                <span class="comment">// Get the frame number based on the chunk index and the window size
+                </span>num = (i % Window::MAX_FRAME_NUM <span class="kw">as </span>usize) <span class="kw">as </span>u8;
+
+                <span class="comment">// Create a new frame with the chunk data
+                </span><span class="kw">let </span>frame = Frame::new(FrameType::Information, num, chunk.to_vec());
+                frame_bytes = frame.to_bytes();
+
+                <span class="comment">// Wait for the window to have space
+                </span>window = condition
+                    .wait_while(window, |window| window.is_full())
+                    .expect(<span class="string">"Failed to wait for condition"</span>);
+
+                <span class="comment">// Push the frame to the window
+                </span>window
+                    .push(frame, tx.clone())
+                    .expect(<span class="string">"Failed to push frame to window, this should never happen"</span>);
+            }
+
+            <span class="comment">// Send the frame to the writer tas
+            </span>tx.send(frame_bytes)
+                .<span class="kw">await
+                </span>.expect(<span class="string">"Failed to send frame to writer task"</span>);
+
+            <span class="macro">info!</span>(<span class="string">"Sent frame {}"</span>, num);
+        }
 
         <span class="comment">// Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
-        </span>{
-            <span class="comment">// Lock the window to access the frames
-            </span><span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-
-            <span class="comment">// Get the frame number based on the chunk index and the window size
-            </span>num = (i % Window::MAX_FRAME_NUM <span class="kw">as </span>usize) <span class="kw">as </span>u8;
-
-            <span class="comment">// Create a new frame with the chunk data
-            </span><span class="kw">let </span>frame = Frame::new(FrameType::Information, num, chunk.to_vec());
-            frame_bytes = frame.to_bytes();
-
-            <span class="comment">// Wait for the window to have space
-            </span><span class="kw">while </span>window.is_full() {
+        </span><span class="macro">info!</span>(<span class="string">"Finished sending file contents, waiting for window to be empty"</span>);
+        {
+            <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
+            <span class="kw">while </span>!window.is_empty() {
+                <span class="macro">debug!</span>(
+                    <span class="string">"Window still not empty: {:X?}"</span>,
+                    window
+                        .frames
+                        .iter()
+                        .map(|(f, t)| (f.num, t))
+                        .collect::&lt;Vec&lt;(u8, <span class="kw-2">&amp;</span>JoinHandle&lt;()&gt;)&gt;&gt;()
+                );
                 window = condition
                     .wait(window)
                     .expect(<span class="string">"Failed to wait for condition"</span>);
             }
-
-            <span class="comment">// Push the frame to the window
-            </span>window
-                .push(frame)
-                .expect(<span class="string">"Failed to push frame to window, this should never happen"</span>);
         }
+        <span class="macro">info!</span>(<span class="string">"Window is empty, all data sent"</span>);
 
-        tx.send(frame_bytes)
-            .<span class="kw">await
-            </span>.expect(<span class="string">"Failed to send frame to writer task"</span>);
-
-        <span class="macro">info!</span>(<span class="string">"Sent frame {}"</span>, num);
-
-        <span class="comment">// Run a timer to resend the frame if it is not acknowledged
-        </span><span class="kw">let </span>tx_clone = tx.clone();
-        <span class="kw">let </span>safe_window_clone = safe_window.clone();
-        create_frame_timer(safe_window_clone, num, tx_clone).<span class="kw">await</span>;
-    }
-
-    <span class="comment">// Create a scope to make sure the window is unlocked as soon as possible when the MutexGuard is dropped
-    </span><span class="macro">info!</span>(<span class="string">"Finished sending file contents, waiting for window to be empty"</span>);
-    {
-        <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-        <span class="kw">while </span>!window.is_empty() {
-            window = condition
-                .wait(window)
-                .expect(<span class="string">"Failed to wait for condition"</span>);
-        }
-    }
-    <span class="macro">info!</span>(<span class="string">"Window is empty, all data sent"</span>);
-
-    <span class="comment">// Send disconnect frame
-    </span>connection_request(<span class="kw-2">&amp;</span>safe_window, <span class="bool-val">false</span>, <span class="prelude-val">None</span>, tx, <span class="kw-2">&amp;</span>condition).<span class="kw">await</span>;
-    <span class="prelude-val">Ok</span>(<span class="string">"Connection ended by client"</span>)
+        <span class="comment">// Send disconnect frame
+        </span>connection_request(safe_window, <span class="bool-val">false</span>, <span class="prelude-val">None</span>, tx, condition).<span class="kw">await</span>;
+        <span class="prelude-val">Ok</span>(<span class="string">"Connection ended by client"</span>)
+    })
 }
 
 <span class="comment">// #[cfg(test)]

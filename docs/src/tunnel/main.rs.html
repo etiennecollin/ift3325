@@ -274,51 +274,6 @@
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
 <a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a>
-<a href="#291" id="291">291</a>
-<a href="#292" id="292">292</a>
-<a href="#293" id="293">293</a>
-<a href="#294" id="294">294</a>
-<a href="#295" id="295">295</a>
-<a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a>
-<a href="#304" id="304">304</a>
-<a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a>
-<a href="#307" id="307">307</a>
-<a href="#308" id="308">308</a>
-<a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A pair of TCP streams that represent a client-server connection.
 //!
 //! The tunnel reads frames from the client and sends them to the server. I then
@@ -338,7 +293,8 @@
 //! probability of dropping a frame, and `&lt;prob_bit_flip&gt;` by the probability
 //! of flipping a bit in a frame.
 //!
-//! The frobabilities are givven as floating point numbers between 0 and 1.
+//! The probabilities are given as floating point numbers in the range [0, 1]
+//! and are independent.
 
 </span><span class="kw">use </span>env_logger::TimestampPrecision;
 <span class="kw">use </span>log::{debug, error, info, warn};
@@ -495,21 +451,11 @@
     <span class="kw">let </span>(server_read, server_write) = server_stream.into_split();
 
     <span class="comment">// Generate writer tasks
-    </span><span class="kw">let </span>client_writer = writer(client_write, client_rx);
-    <span class="kw">let </span>server_writer = writer(server_write, server_rx);
+    </span><span class="kw">let </span>client_writer = writer(client_write, client_rx, drop_probability, flip_probability);
+    <span class="kw">let </span>server_writer = writer(server_write, server_rx, drop_probability, flip_probability);
 
-    <span class="kw">let </span>client_handler = handle_client(
-        client_read,
-        server_tx.clone(),
-        drop_probability,
-        flip_probability,
-    );
-    <span class="kw">let </span>server_handler = handle_server(
-        server_read,
-        client_tx.clone(),
-        drop_probability,
-        flip_probability,
-    );
+    <span class="kw">let </span>client_handler = handle_client(client_read, server_tx.clone());
+    <span class="kw">let </span>server_handler = handle_server(server_read, client_tx.clone());
 
     <span class="comment">// Drop our own copies of the sender channels
     // This will allow the writer tasks to
@@ -534,8 +480,6 @@
 </span><span class="kw">fn </span>handle_client(
     <span class="kw-2">mut </span>client_read: OwnedReadHalf,
     server_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
-    drop_probability: f32,
-    flip_probability: f32,
 ) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
     tokio::spawn(<span class="kw">async move </span>{
         <span class="kw">loop </span>{
@@ -557,22 +501,6 @@
             }
 
             <span class="comment">// =====================================================================
-            // Perturb the frame
-            // =====================================================================
-            // Drop the frame with a probability
-            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; drop_probability {
-                <span class="macro">warn!</span>(<span class="string">"Dropping client frame"</span>);
-                <span class="kw">continue</span>;
-            }
-
-            <span class="comment">// Bit flip the frame with a probability
-            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; flip_probability {
-                <span class="macro">warn!</span>(<span class="string">"Flipping bit in client frame"</span>);
-                <span class="kw">let </span>bit = rand::random::&lt;usize&gt;() % read_length * <span class="number">8</span>;
-                from_client[bit / <span class="number">8</span>] ^= <span class="number">1 </span>&lt;&lt; (bit % <span class="number">8</span>);
-            }
-
-            <span class="comment">// =====================================================================
             // Send the frame to server
             // =====================================================================
             </span><span class="macro">debug!</span>(<span class="string">"Sending frame to server"</span>);
@@ -591,8 +519,6 @@
 </span><span class="kw">fn </span>handle_server(
     <span class="kw-2">mut </span>server_read: OwnedReadHalf,
     client_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
-    drop_probability: f32,
-    flip_probability: f32,
 ) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
     tokio::spawn(<span class="kw">async move </span>{
         <span class="kw">loop </span>{
@@ -611,22 +537,6 @@
             <span class="kw">if </span>read_length == <span class="number">0 </span>{
                 <span class="macro">warn!</span>(<span class="string">"Server closed the connection"</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            }
-
-            <span class="comment">// =====================================================================
-            // Perturb the frame
-            // =====================================================================
-            // Drop the frame with a probability
-            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; drop_probability {
-                <span class="macro">warn!</span>(<span class="string">"Dropping server frame"</span>);
-                <span class="kw">continue</span>;
-            }
-
-            <span class="comment">// Bit flip the frame with a probability
-            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; flip_probability {
-                <span class="macro">warn!</span>(<span class="string">"Flipping bit in server frame"</span>);
-                <span class="kw">let </span>bit = rand::random::&lt;usize&gt;() % read_length * <span class="number">8</span>;
-                from_server[bit / <span class="number">8</span>] ^= <span class="number">1 </span>&lt;&lt; (bit % <span class="number">8</span>);
             }
 
             <span class="comment">// =====================================================================

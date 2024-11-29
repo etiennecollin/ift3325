@@ -323,6 +323,21 @@
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Contains the functions to manage the IO tasks.
 
 </span><span class="kw">use crate</span>::{
@@ -519,10 +534,25 @@
 </span><span class="kw">pub fn </span>writer(
     <span class="kw-2">mut </span>stream: OwnedWriteHalf,
     <span class="kw-2">mut </span>rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;,
+    drop_probability: f32,
+    flip_probability: f32,
 ) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
     tokio::spawn(<span class="kw">async move </span>{
         <span class="comment">// Receive frames until all tx are dropped
-        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(frame) = rx.recv().<span class="kw">await </span>{
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>frame) = rx.recv().<span class="kw">await </span>{
+            <span class="comment">// Drop the frame with a probability
+            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; drop_probability {
+                <span class="macro">warn!</span>(<span class="string">"Dropping frame"</span>);
+                <span class="kw">continue</span>;
+            }
+
+            <span class="comment">// Bit flip the frame with a probability
+            </span><span class="kw">if </span>rand::random::&lt;f32&gt;() &lt; flip_probability {
+                <span class="macro">warn!</span>(<span class="string">"Flipping bit in frame"</span>);
+                <span class="kw">let </span>bit = rand::random::&lt;usize&gt;() % frame.len() * <span class="number">8</span>;
+                frame[bit / <span class="number">8</span>] ^= <span class="number">1 </span>&lt;&lt; (bit % <span class="number">8</span>);
+            }
+
             <span class="macro">debug!</span>(<span class="string">"Sending frame {:X?}"</span>, frame);
             <span class="comment">// Send the file contents to the server
             </span><span class="kw">if </span>stream.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await</span>.is_err() {

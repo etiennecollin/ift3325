@@ -506,8 +506,8 @@
     <span class="doccomment">/// Replace an escaped byte by computing the XOR between the byte and this byte
     </span><span class="kw">pub const </span>REPLACEMENT_POSITION: u8 = <span class="number">0x20</span>;
     <span class="doccomment">/// The maximum size of the data field in bytes
-    </span><span class="comment">// pub const MAX_SIZE_DATA: usize = 64; // 64B
-    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">64 </span>* <span class="number">1024</span>; <span class="comment">// 64kB
+    </span><span class="kw">pub const </span>MAX_SIZE_DATA: usize = <span class="number">1024</span>; <span class="comment">// 1kB
+                                           // pub const MAX_SIZE_DATA: usize = 64 * 1024; // 64kB
 
     </span><span class="doccomment">/// The size of a frame in bytes
     ///

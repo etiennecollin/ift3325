@@ -13,6 +13,8 @@ class "<<struct>>\nServer" as Server{
   - async assembler(mut assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) : Result<&'static str, &'static str>
 }
 
+
+
 /'
   class "<<struct>>\nTunnel" as Tunnel {
   - handle_connection(client_stream: TcpStream, server_stream: TcpStream,drop_probability: f32, flip_probability: f32)
@@ -57,6 +59,16 @@ class "<<struct>>\nFrame" as Frame {
   + from_bytes(bytes: &[u8]) : Result<Frame, FrameError>
 }
 
+annotation "<<module>>\n tests" as testsFrame {
+  - frame_abort_error_test() 
+  - frame_length_error_test() 
+  - frame_flags_error_test() 
+  - frame_type_error_test() 
+  - frame_crc_error_test()
+  - frame_get_bytes_structure_test()
+  - bytes_to_frame_conversion_test()
+  - frame_empty_data_test()
+}
 class "<<struct>>\nWindow" as Window {
   - const NUMBERING_BITS: usize = 3
   - const MAX_FRAME_NUM: u8 = 8
@@ -82,6 +94,13 @@ class "<<struct>>\nWindow" as Window {
   + default() Self
 }
 
+annotation "<<module>>\n tests" as testsWindow {
+  - test_push_and_pop() 
+  - test_window_full()
+  - test_contains()
+  - test_pop_until()
+}
+
 enum WindowError {
   Full : u8
 }
@@ -89,6 +108,11 @@ enum WindowError {
 annotation "<<package>>\nCRC" as CRC {
     + lookup_table() : [u16; 256]
     + crc_16_ccitt(data: &[u8]) : u16
+}
+
+annotation "<<module>>\n tests" as testsCRC {
+    - crc_16_ccitt_string_test() 
+    - crc_16_ccitt_array_test() 
 }
 
 annotation "<<package>>\nIO" as IO {
@@ -99,9 +123,22 @@ annotation "<<package>>\nIO" as IO {
     + create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>)
 }
 
+annotation "<<module>>\n tests" as testsIO {
+    - test_writer() 
+    - test_reader()
+}
+
 annotation "<<package>>\nByteStuffing" as ByteStuffing {
     + byte_stuffing(frame_bytes: &[u8]) : Vec<u8>
     + byte_destuffing(frame_bytes: &[u8]) : Result<Vec<u8>, FrameError>
+}
+
+annotation "<<module>>\n tests" as testsByteStuffing {
+    - bit_stuffing_escape_test() 
+    - bit_stuffing_abort_test() 
+    - bit_stuffing_simple_test() 
+    - byte_stuffing_complex_test() 
+    - byte_stuffing_empty_test() 
 }
 
 annotation "<<package>>\n FrameHandler" as FrameHandler {
@@ -114,9 +151,26 @@ annotation "<<package>>\n FrameHandler" as FrameHandler {
     + handle_p(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>): bool
 }
 
+annotation "<<module>>\n tests" as testsFrameHandler {
+    - test_handle_connection_end() 
+    - test_handle_receive_ready() 
+    - test_handle_reject() 
+}
+
+
+
 annotation "<<package>>\n Misc" as Misc {
     + async flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str>
 }
+
+annotation "<<module>>\n tests" as testsMisc {
+    - test_flatten_ok() 
+    - test_flatten_error() 
+    - test_flatten_panicked() 
+}
+
+
+
 
 
 
@@ -156,6 +210,18 @@ IO --> FrameHandler : utilise
 Client --> Misc : utilise 
 Server --> Misc : utilise
 'Tunnel --> Misc : utilise
+
+FrameHandler --> testsFrameHandler : contient 
+Frame --> testsFrame : contient 
+Window --> testsWindow : contient 
+CRC --> testsCRC : contient
+ByteStuffing --> testsByteStuffing : contient
+Misc --> testsMisc : contient 
+IO --> testsIO : contient 
+
+
+
+
 
 /'
 Utils --|> ByteStuffing : contient

@@ -54,6 +54,27 @@ cargo run --release -p server 8080 0.1 0.1
 cargo run --release -p client 127.0.0.1 8080 <file_path> 0 0 0
 ```
 
+## Testing
+
+To run the tests, use:
+
+```bash
+cargo test
+```
+
+For a better test UI and parallel execution of tests, use `cargo-nextest`.
+Install it with:
+
+```bash
+cargo install cargo-nextest --locked
+```
+
+and run the tests with:
+
+```bash
+cargo nextest run
+```
+
 ## Logging
 
 The log level may be changed through an environment variable.

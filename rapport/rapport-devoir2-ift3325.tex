@@ -1,0 +1,170 @@
+\documentclass[french]{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{amsfonts}
+\usepackage{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{algorithmic}
+\newtheorem{theorem}{Définition}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{seqsplit}
+\usepackage{fullpage}
+\usepackage{fancyvrb}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{svg}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82} \definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+\renewcommand{\qedsymbol}{$\blacksquare$}
+% footnote with number
+\title{Devoir 4 IFT2125}
+\author{Étienne Collin,Emeric Laberge}
+\date{Novembre 2023}
+%\setlength{\parindent}{0pt}
+\usepackage{geometry}
+% \geometry{a4paper, margin=1in}
+\begin{document} \title{Devoir 2 IFT3325}
+\author{Étienne Collin, Emeric Laberge}
+\date{\today}
+\begin{titlepage}
+	\begin{center}
+		\vspace*{1cm}
+
+		\Huge
+		\textbf{Devoir 2}
+
+		\vspace{0.5cm}
+		\LARGE
+
+		\vspace{1.5cm}
+
+
+    \textbf{Étienne Collin}\\ \?\?\ \\
+
+		\textbf{Emeric Laberge}\\ 20220275
+
+		\vfill
+
+		Dans le cadre du cours\\
+    IFT 3325 
+
+
+		\vspace{0.8cm}
+
+		\includegraphics[width=0.4\textwidth]{udem.jpg}
+
+		\Large
+		Département d'informatique et de recherche opérationnelle\\
+		Université de Montréal\\
+		Canada\\
+		29 novembre 2024
+
+	\end{center}
+\end{titlepage}
+
+
+\section{Window}
+\subsection{La struct window} 
+\begin{lstlisting}[language=Rust] 
+pub struct Window {
+    pub frames: VecDeque<WindowElement>,
+    pub resend_all: bool,
+    pub is_connected: bool,
+    pub srej: bool,
+    pub sent_disconnect_request: bool,
+} 
+\end{lstlisting} 
+
+\subsection{La fonction de la struct window} 
+La struct window est une fenêtre coulissante pour un protocole Go-Back-N. Elle
+implémente une deque avec une taille maximale de WINDOW\_SIZE. 
+
+\subsection{Les champs de la struct window} 
+\begin{itemize}
+    \item \textbf{frames: VecDeque<WindowElement>} : Les frames dans la fenêtre
+    \item \textbf{resend\_all: bool} : Drapeau pour renvoyer toutes les frames dans la fenêtre
+    \item \textbf{is\_connected: bool} : Drapeau pour indiquer si la connexion est établie
+    \item \textbf{srej: bool} : Drapeau pour indiquer si la fenêtre utilise le protocole de rejet sélectif
+    \item \textbf{sent\_disconnect\_request: bool} : Drapeau pour indiquer si une demande de déconnexion a été envoyée 
+  \end{itemize} 
+
+  \subsection{Les constantes de la struct window} 
+  \begin{itemize}
+    \item \textbf{NUMBERING\_BITS: usize = 3usize} : Nombre de bits utilisés pour numéroter les frames
+    \item \textbf{MAX\_FRAME\_NUM: u8 = 8u8} : Le numéro maximum qu'une frame peut prendre
+    \item \textbf{FRAME\_TIMEOUT: u64 = 3u64} : Le temps maximum en secondes à attendre avant qu'une frame soit considérée comme perdue
+    \item \textbf{SIZE\_GO\_BACK\_N: usize = 7usize} : Le nombre maximum de frames qui peuvent être dans la fenêtre pour le protocole Go-Back-N
+    \item \textbf{SIZE\_SREJ: usize = 4usize} : Le nombre maximum de frames qui peuvent être dans la fenêtre pour le protocole de rejet sélectif
+  \end{itemize}
+
+  \subsection{Les méthodes de la struct window} 
+  \subsubsection{pop\_until(num: u8, inclusive: bool, condition: SafeCond) ->
+  usize} 
+
+  \begin{lstlisting}
+  /// Pop frames from the front of the window until the frame with the given number is reached.
+    ///
+    /// # Arguments
+    /// - `num`: The number of the frame to pop until
+    /// - `inclusive`: If true, the frame with the given number is also popped
+    /// - `condition`: The condition variable to notify the send task
+    ///
+    /// Returns the number of frames popped
+    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: SafeCond) -> usize {
+        // Get the index of "limit" frame in the window
+        let i = match self.frames.iter().position(|(frame, _)| frame.num == num) {
+            Some(i) => i,
+            None => {
+                debug!("Frame not found in window, this means it was already acknowledged");
+                return 0;
+            }
+        };
+
+        // Pop the frames that were acknowledged
+        let drained = if inclusive {
+            self.frames.drain(..i + 1)
+        } else {
+            self.frames.drain(..i)
+        };
+
+        let drained_size = drained.len();
+
+        // Abort the timers tasks for the frames that were popped
+        drained.for_each(|(_, handle)| handle.abort());
+
+        // Notify the send task that space was created in the window
+        condition.notify_one();
+
+        // Return the number of frames popped
+        drained_size
+    }
+  \end{lstlisting}
+  \end{document}
+

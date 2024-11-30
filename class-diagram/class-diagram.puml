@@ -166,11 +166,6 @@ annotation "<<sub-module>>\n tests" as TestsMisc {
     - test_flatten_panicked() 
 }
 
-
-
-
-
-
 'Client --> Tunnel : "reçoit les \nframes du client"
 'Tunnel --> Client : "envoie les \nframes du serveur"
 'Server --> Tunnel : "reçoit les \nframes du serveur" 
@@ -208,17 +203,13 @@ Client --> Misc : utilise
 Server --> Misc : utilise
 'Tunnel --> Misc : utilise
 
-FrameHandler --> testsFrameHandler : contient 
-Frame --> testsFrame : contient 
-Window --> testsWindow : contient 
-CRC --> testsCRC : contient
-ByteStuffing --> testsByteStuffing : contient
-Misc --> testsMisc : contient 
-IO --> testsIO : contient 
-
-
-
-
+FrameHandler --> TestsFrameHandler : contient 
+Frame --> TestsFrame : contient 
+Window --> TestsWindow : contient 
+CRC --> TestsCRC : contient
+ByteStuffing --> TestsByteStuffing : contient
+Misc --> TestsMisc : contient 
+IO --> TestsIO : contient 
 
 /'
 Utils --|> ByteStuffing : contient

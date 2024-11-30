@@ -372,3 +372,109 @@ pub async fn connection_request(
     }
     window.is_connected = connection_start;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc;
+    use tokio::try_join;
+
+    /// Creates a pair of TCP streams.
+    ///
+    /// The function binds a listener to an ephemeral port and connects to it.
+    ///
+    /// # Returns
+    /// A tuple containing the read and write halves of the client and server streams.
+    async fn create_tcp_streams() -> (
+        (OwnedReadHalf, OwnedWriteHalf),
+        (OwnedReadHalf, OwnedWriteHalf),
+    ) {
+        // Start a TCP listener on an ephemeral port
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind listener");
+        let addr = listener.local_addr().expect("Failed to get local address");
+
+        // Spawn a task to accept the connection
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("Failed to accept connection");
+            stream.into_split()
+        });
+
+        // Connect to the listener
+        let client_stream = TcpStream::connect(addr)
+            .await
+            .expect("Failed to connect to server");
+        let (client_read_half, client_write_half) = client_stream.into_split();
+
+        let (server_read_half, server_write_half) = server.await.expect("Failed to get server");
+
+        (
+            (client_read_half, client_write_half),
+            (server_read_half, server_write_half),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_writer() {
+        let ((_, client_write), (mut server_read, _)) = create_tcp_streams().await;
+        let (tx, rx) = mpsc::channel(10);
+
+        // Spawn a task to read from the stream
+        let reader_handle = tokio::spawn(async move {
+            let mut buf = vec![0; 64];
+            let n = server_read
+                .read(&mut buf)
+                .await
+                .expect("Failed to read from stream");
+            assert_eq!(&buf[..n], &[1, 2, 3, 4]);
+        });
+
+        // Spawn a task to write to the stream
+        let writer_handle = writer(client_write, rx, 0f32, 0f32);
+
+        // Send a mock message
+        tx.send(vec![1, 2, 3, 4])
+            .await
+            .expect("Failed to send message");
+        // Close sender to allow writer to complete
+        drop(tx);
+
+        assert!(writer_handle.await.is_ok(), "Writer task failed");
+        reader_handle.await.expect("Reader task failed");
+    }
+
+    #[tokio::test]
+    async fn test_reader() {
+        let ((client_read, _), (_, mut server_write)) = create_tcp_streams().await;
+        let (tx, _rx) = mpsc::channel(10);
+
+        let window = SafeWindow::default();
+        {
+            let mut window = window.lock().expect("Failed to lock window");
+            window.is_connected = true;
+            window.sent_disconnect_request = false;
+        }
+        let reader_handle = reader(client_read, SafeWindow::default(), Some(tx), None);
+
+        // Mock the input to the reader by writing data to the server's write half
+        server_write
+            .write_all(&[
+                Frame::BOUNDARY_FLAG,
+                FrameType::ConnectionEnd.into(),
+                0,
+                0xA7,
+                0x6A,
+                Frame::BOUNDARY_FLAG,
+            ])
+            .await
+            .expect("Failed to write to stream");
+
+        assert!(try_join!(reader_handle).is_ok());
+    }
+}

@@ -5,7 +5,7 @@
 
 use crate::{
     frame::{Frame, FrameType},
-    window::{SafeCond, SafeWindow, Window},
+    window::{SafeWindow, Window},
 };
 use log::{debug, info, warn};
 use tokio::sync::mpsc::Sender;
@@ -13,7 +13,7 @@ use tokio::sync::mpsc::Sender;
 /// Handles the receive ready frames.
 ///
 /// Pop the acknowledged frames from the window.
-pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame, condition: SafeCond) -> bool {
+pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame) -> bool {
     let mut window = safe_window.lock().expect("Failed to lock window");
 
     // Ignore the frame if the connection is not established
@@ -25,7 +25,6 @@ pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame, condition: S
     window.pop_until(
         (frame.num + (Window::MAX_FRAME_NUM - 1)) % Window::MAX_FRAME_NUM,
         true,
-        condition,
     );
 
     info!("Received RR {}", frame.num);
@@ -37,23 +36,17 @@ pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame, condition: S
 /// If we are not the ones initiating the disconnection, we should send an
 /// acknowledgment. Else, we should pop the connection request frame
 /// from our window as it was acknowledged.
-pub async fn handle_connection_end(
-    safe_window: SafeWindow,
-    writer_tx: Sender<Vec<u8>>,
-    condition: SafeCond,
-) -> bool {
+pub async fn handle_connection_end(safe_window: SafeWindow, writer_tx: Sender<Vec<u8>>) -> bool {
+    info!("Received connection end frame");
+
     let sent_disconnect_request;
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
         window.is_connected = false;
         sent_disconnect_request = window.sent_disconnect_request;
-        info!("Received connection end frame");
 
-        // If we sent the request, we should pop the connection request frame
-        // from our window as it was acknowledged.
-        if sent_disconnect_request {
-            window.pop_front(condition);
-        }
+        // Empty the window
+        window.clear();
     }
 
     // If we are not the ones initiating the disconnection, we should send an
@@ -79,7 +72,6 @@ pub async fn handle_connection_start(
     safe_window: SafeWindow,
     frame: &Frame,
     writer_tx: Sender<Vec<u8>>,
-    condition: SafeCond,
 ) -> bool {
     let is_window_empty;
     {
@@ -103,7 +95,7 @@ pub async fn handle_connection_start(
             // Check if the SREJ flag is consistent with the frame number
             assert_eq!(frame_srej, window.srej);
             // Pop the connection request frame from the window as it was acknowledged
-            window.pop_front(condition);
+            window.pop_front();
             info!("Received acknowledgment for connection request frame");
         }
     }
@@ -129,7 +121,6 @@ pub async fn handle_reject(
     safe_window: SafeWindow,
     frame: &Frame,
     writer_tx: Sender<Vec<u8>>,
-    condition: SafeCond,
 ) -> bool {
     let frames: Vec<(u8, Vec<u8>)>;
     {
@@ -145,7 +136,6 @@ pub async fn handle_reject(
         let popped_num = window.pop_until(
             (frame.num + (Window::MAX_FRAME_NUM - 1)) % Window::MAX_FRAME_NUM,
             true,
-            condition,
         );
 
         debug!("Popped {} frames", popped_num);
@@ -179,7 +169,7 @@ pub async fn handle_reject(
     );
 
     for (_, frame) in frames {
-        //FIXME: Seems like there is a deadlock here. I never reach the debug
+        // WARN: Seems like there is a deadlock here. I never reach the debug
         // statement after the loop. It also prevents the timers from sending
         // data to the writer.
         writer_tx.send(frame).await.expect("Failed to resend frame");
@@ -198,7 +188,6 @@ pub async fn handle_information(
     safe_window: SafeWindow,
     frame: Frame,
     writer_tx: Sender<Vec<u8>>,
-    condition: SafeCond,
     assembler_tx: Sender<Vec<u8>>,
     expected_info_num: &mut u8,
 ) -> bool {
@@ -220,7 +209,7 @@ pub async fn handle_information(
     // Pop old reject frames from window
     {
         let mut window = safe_window.lock().expect("Failed to lock window");
-        window.pop_until(frame.num, true, condition);
+        window.pop_until(frame.num, true);
     }
 
     // Update the expected next information frame number
@@ -249,7 +238,7 @@ pub async fn handle_information(
 ///
 /// Send a reject frame for the dropped frame and run a timer to resend the
 /// frame if it is not received after a while.
-pub async fn handle_dropped_frame(
+async fn handle_dropped_frame(
     frame: &Frame,
     safe_window: SafeWindow,
     writer_tx: Sender<Vec<u8>>,
@@ -283,7 +272,7 @@ pub async fn handle_dropped_frame(
     safe_window
         .lock()
         .expect("Failed to lock window")
-        .push(rej_frame, writer_tx.clone())
+        .push(rej_frame, writer_tx)
         .expect("Window is full, this should probably never happen");
 }
 
@@ -309,16 +298,15 @@ pub async fn handle_p(writer_tx: Sender<Vec<u8>>, expected_info_num: u8) -> bool
 mod tests {
     use super::*;
     use crate::frame::{Frame, FrameType};
-    use crate::window::{SafeCond, SafeWindow};
+    use crate::window::SafeWindow;
     use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_handle_connection_end() {
         let window = SafeWindow::default();
         let (tx, mut rx) = mpsc::channel(10);
-        let cond = SafeCond::default();
 
-        let should_terminate = handle_connection_end(window, tx, cond).await;
+        let should_terminate = handle_connection_end(window, tx).await;
 
         assert!(should_terminate);
         assert!(rx.try_recv().is_ok(), "Acknowledgment frame not sent");
@@ -327,17 +315,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_receive_ready() {
         let window = SafeWindow::default();
-        let cond = SafeCond::default();
 
         let frame = Frame::new(FrameType::ReceiveReady, 1, vec![]);
-        let should_continue = handle_receive_ready(window, &frame, cond);
+        let should_continue = handle_receive_ready(window, &frame);
 
         assert!(!should_continue);
     }
     #[tokio::test]
     async fn test_handle_reject() {
         let window = SafeWindow::default();
-        let cond = SafeCond::default();
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(10);
 
         {
@@ -349,7 +335,7 @@ mod tests {
         }
 
         let frame = Frame::new(FrameType::Reject, 1, vec![]);
-        let should_continue = handle_reject(window, &frame, tx, cond).await;
+        let should_continue = handle_reject(window, &frame, tx).await;
 
         assert!(
             !should_continue,

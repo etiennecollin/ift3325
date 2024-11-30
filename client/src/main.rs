@@ -148,18 +148,14 @@ async fn setup_connection(
 
     // Create a window to manage the frames
     let window = SafeWindow::default();
-
-    // Create a condition to signal the send task that space is available in the window
-    let condition = SafeCond::default();
+    let condition = window
+        .lock()
+        .expect("Failed to lock window")
+        .condition
+        .clone();
 
     // Spawn reader task which receives frames from the server
-    let reader = reader(
-        read,
-        window.clone(),
-        condition.clone(),
-        Some(tx.clone()),
-        None,
-    );
+    let reader = reader(read, window.clone(), Some(tx.clone()), None);
 
     // Spawn the writer task which sends frames to the server
     let writer = writer(write, rx, drop_probability, flip_probability);
@@ -179,7 +175,7 @@ async fn setup_connection(
     // =========================================================================
     // Send the file to the server
     // =========================================================================
-    let sender = send_file(tx.clone(), window.clone(), condition.clone(), file_path);
+    let sender = send_file(tx.clone(), window.clone(), condition, file_path);
 
     // Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -269,7 +265,7 @@ fn send_file(
                     .expect("Failed to push frame to window, this should never happen");
             }
 
-            // Send the frame to the writer tas
+            // Send the frame to the writer task
             tx.send(frame_bytes)
                 .await
                 .expect("Failed to send frame to writer task");

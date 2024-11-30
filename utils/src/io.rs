@@ -37,7 +37,6 @@ pub const CHANNEL_CAPACITY: usize = 1024;
 pub fn reader(
     mut stream: OwnedReadHalf,
     window: SafeWindow,
-    condition: SafeCond,
     writer_tx: Option<mpsc::Sender<Vec<u8>>>,
     assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
 ) -> JoinHandle<Result<&'static str, &'static str>> {
@@ -91,7 +90,6 @@ pub fn reader(
                     let do_disconnect = handle_reception(
                         frame,
                         window.clone(),
-                        condition.clone(),
                         writer_tx.clone(),
                         assembler_tx.clone(),
                         &mut next_info_frame_num,
@@ -152,7 +150,6 @@ pub fn reader(
 pub async fn handle_reception(
     frame: Frame,
     safe_window: SafeWindow,
-    condition: SafeCond,
     writer_tx: Option<mpsc::Sender<Vec<u8>>>,
     assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
     expected_info_num: &mut u8,
@@ -160,19 +157,16 @@ pub async fn handle_reception(
     let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
 
     match frame.frame_type.into() {
-        FrameType::ReceiveReady => handle_receive_ready(safe_window, &frame, condition),
-        FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx, condition).await,
-        FrameType::ConnectionStart => {
-            handle_connection_start(safe_window, &frame, writer_tx, condition).await
-        }
-        FrameType::Reject => handle_reject(safe_window, &frame, writer_tx, condition).await,
+        FrameType::ReceiveReady => handle_receive_ready(safe_window, &frame),
+        FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx).await,
+        FrameType::ConnectionStart => handle_connection_start(safe_window, &frame, writer_tx).await,
+        FrameType::Reject => handle_reject(safe_window, &frame, writer_tx).await,
         FrameType::Information => {
             let assembler_tx = assembler_tx.expect("No sender provided to handle frame reassembly");
             handle_information(
                 safe_window,
                 frame,
                 writer_tx,
-                condition,
                 assembler_tx,
                 expected_info_num,
             )
@@ -199,7 +193,10 @@ pub fn writer(
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
         // Receive frames until all tx are dropped
+        // FIXME: Sometimes, the "await" never wakes up...
         while let Some(mut frame) = rx.recv().await {
+            debug!("Writer task received frame {:X?}", frame);
+
             // Drop the frame with a probability
             if rand::random::<f32>() < drop_probability {
                 warn!("Dropping frame");
@@ -259,9 +256,10 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
             interval.tick().await;
 
             info!("Timeout expired, resending frame {}", frame_bytes[2]);
-            tx.send(frame_bytes.clone())
-                .await
-                .expect("Failed to send frame");
+            if tx.send(frame_bytes.clone()).await.is_err() {
+                error!("Failed to send frame to writer task. Channel probably dropped");
+                return;
+            }
             debug!("Resent frame {}", frame_bytes[2]);
         }
     })
@@ -335,6 +333,5 @@ pub async fn connection_request(
             .wait_while(window, |window| !window.is_empty())
             .expect("Failed to wait for window");
     }
-
     window.is_connected = connection_start;
 }

@@ -35,6 +35,8 @@ pub struct Window {
     pub srej: bool,
     /// Flag to indicate if a disconnect request was sent
     pub sent_disconnect_request: bool,
+    /// Condition variable to notify the send task when space is available
+    pub condition: SafeCond,
 }
 
 impl Window {
@@ -58,6 +60,7 @@ impl Window {
             is_connected: false,
             srej: false,
             sent_disconnect_request: false,
+            condition: SafeCond::default(),
         }
     }
 
@@ -94,7 +97,7 @@ impl Window {
     /// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    pub fn pop_front(&mut self, condition: SafeCond) -> Option<Frame> {
+    pub fn pop_front(&mut self) -> Option<Frame> {
         let popped = self.frames.pop_front();
 
         if let Some(popped) = popped {
@@ -102,7 +105,7 @@ impl Window {
             popped.1.abort();
 
             // Notify the send task that space was created in the window
-            condition.notify_one();
+            self.condition.notify_one();
 
             return Some(popped.0);
         }
@@ -133,7 +136,7 @@ impl Window {
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
-    pub fn pop(&mut self, num: u8, condition: SafeCond) -> Option<Frame> {
+    pub fn pop(&mut self, num: u8) -> Option<Frame> {
         let i = self.frames.iter().position(|(frame, _)| frame.num == num);
         match i {
             Some(i) => {
@@ -145,7 +148,7 @@ impl Window {
                 // Abort the timer task for the frame that was popped
                 popped.1.abort();
                 // Notify the send task that space was created in the window
-                condition.notify_one();
+                self.condition.notify_one();
                 Some(popped.0)
             }
             None => None,
@@ -160,7 +163,7 @@ impl Window {
     /// - `condition`: The condition variable to notify the send task
     ///
     /// Returns the number of frames popped
-    pub fn pop_until(&mut self, num: u8, inclusive: bool, condition: SafeCond) -> usize {
+    pub fn pop_until(&mut self, num: u8, inclusive: bool) -> usize {
         // Get the index of "limit" frame in the window
         let i = match self.frames.iter().position(|(frame, _)| frame.num == num) {
             Some(i) => i,
@@ -183,10 +186,17 @@ impl Window {
         drained.for_each(|(_, handle)| handle.abort());
 
         // Notify the send task that space was created in the window
-        condition.notify_one();
+        self.condition.notify_one();
 
         // Return the number of frames popped
         drained_size
+    }
+
+    /// Clears all frames from the window.
+    pub fn clear(&mut self) {
+        self.frames.iter().for_each(|(_, handle)| handle.abort());
+        self.frames.clear();
+        self.condition.notify_one();
     }
 }
 
@@ -209,7 +219,7 @@ mod tests {
         assert!(window.push(frame, tx).is_ok());
         assert_eq!(window.frames.len(), 1);
 
-        let popped_frame = window.pop_front(Arc::new(Condvar::new())).unwrap();
+        let popped_frame = window.pop_front().unwrap();
         assert_eq!(popped_frame.data, vec![1, 2, 3]);
     }
 
@@ -245,7 +255,6 @@ mod tests {
     #[tokio::test]
     async fn test_pop_until() {
         let mut window = Window::new();
-        let cond = Arc::new(Condvar::new());
         let tx = tokio::sync::mpsc::channel(1).0;
         for i in 0..3 {
             window
@@ -256,7 +265,7 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(window.pop_until(1, true, cond), 2);
+        assert_eq!(window.pop_until(1, true), 2);
         assert_eq!(window.frames.len(), 1);
     }
 }

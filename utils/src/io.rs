@@ -6,13 +6,13 @@ use crate::{
     window::{SafeCond, SafeWindow, Window},
 };
 use log::{debug, error, info, warn};
-use std::process::exit;
+use std::{process::exit, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    sync::mpsc,
+    sync::mpsc::{self, error::TryRecvError},
     task::JoinHandle,
-    time,
+    time::{self, sleep},
 };
 
 /// The number of message the channel can hold.
@@ -193,35 +193,72 @@ pub fn writer(
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
         // Receive frames until all tx are dropped
-        // FIXME: Sometimes, the "await" never wakes up...
-        while let Some(mut frame) = rx.recv().await {
-            debug!("Writer task received frame {:X?}", frame);
+        loop {
+            match rx.try_recv() {
+                Ok(mut frame) => {
+                    debug!("Writer task received frame {:X?}", frame);
 
-            // Drop the frame with a probability
-            if rand::random::<f32>() < drop_probability {
-                warn!("Dropping frame");
-                continue;
-            }
+                    // Drop the frame with a probability
+                    if rand::random::<f32>() < drop_probability {
+                        warn!("Dropping frame");
+                        continue;
+                    }
 
-            // Bit flip the frame with a probability
-            if rand::random::<f32>() < flip_probability {
-                warn!("Flipping bit in frame");
-                let bit = rand::random::<usize>() % frame.len() * 8;
-                frame[bit / 8] ^= 1 << (bit % 8);
-            }
+                    // Bit flip the frame with a probability
+                    if rand::random::<f32>() < flip_probability {
+                        warn!("Flipping bit in frame");
+                        let bit = rand::random::<usize>() % frame.len() * 8;
+                        frame[bit / 8] ^= 1 << (bit % 8);
+                    }
 
-            debug!("Sending frame {:X?}", frame);
-            // Send the file contents to the server
-            if stream.write_all(&frame).await.is_err() {
-                return Err("Failed to write to stream");
+                    debug!("Sending frame {:X?}", frame);
+                    // Send the file contents to the server
+                    if stream.write_all(&frame).await.is_err() {
+                        return Err("Failed to write to stream");
+                    };
+
+                    // Flush the stream to ensure the data is sent immediately
+                    if (stream.flush().await).is_err() {
+                        return Err("Failed to flush stream");
+                    };
+                    info!("Sent frame");
+                }
+                Err(TryRecvError::Empty) => sleep(Duration::from_millis(10)).await,
+                Err(TryRecvError::Disconnected) => break,
             };
-
-            // Flush the stream to ensure the data is sent immediately
-            if (stream.flush().await).is_err() {
-                return Err("Failed to flush stream");
-            };
-            info!("Sent frame");
         }
+
+        // BUG: Sometimes, the "await" never wakes up...
+        // The code higher seems to fix it.
+        //
+        // while let Some(mut frame) = rx.recv().await {
+        //     debug!("Writer task received frame {:X?}", frame);
+        //
+        //     // Drop the frame with a probability
+        //     if rand::random::<f32>() < drop_probability {
+        //         warn!("Dropping frame");
+        //         continue;
+        //     }
+        //
+        //     // Bit flip the frame with a probability
+        //     if rand::random::<f32>() < flip_probability {
+        //         warn!("Flipping bit in frame");
+        //         let bit = rand::random::<usize>() % frame.len() * 8;
+        //         frame[bit / 8] ^= 1 << (bit % 8);
+        //     }
+        //
+        //     debug!("Sending frame {:X?}", frame);
+        //     // Send the file contents to the server
+        //     if stream.write_all(&frame).await.is_err() {
+        //         return Err("Failed to write to stream");
+        //     };
+        //
+        //     // Flush the stream to ensure the data is sent immediately
+        //     if (stream.flush().await).is_err() {
+        //         return Err("Failed to flush stream");
+        //     };
+        //     info!("Sent frame");
+        // }
 
         // Close the connection
         if stream.shutdown().await.is_err() {

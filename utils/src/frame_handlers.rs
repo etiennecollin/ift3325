@@ -137,10 +137,6 @@ pub async fn handle_reject(
 
         // Ignore the frame if the connection is not established
         if !window.is_connected {
-            debug!(
-                "Received REJ for frame {} but connection is not established",
-                frame.num
-            );
             return false;
         }
         let srej = window.srej;
@@ -217,7 +213,8 @@ pub async fn handle_information(
 
     // Check if a frame was dropped
     if *expected_info_num != frame.num {
-        return handle_dropped_frame(&frame, safe_window, writer_tx, *expected_info_num).await;
+        handle_dropped_frame(&frame, safe_window, writer_tx, *expected_info_num).await;
+        return false;
     }
 
     // Pop old reject frames from window
@@ -257,7 +254,7 @@ pub async fn handle_dropped_frame(
     safe_window: SafeWindow,
     writer_tx: Sender<Vec<u8>>,
     expected_info_num: u8,
-) -> bool {
+) {
     warn!(
         "Dropped frame detected - Received: {}, Expected: {}",
         frame.num, expected_info_num
@@ -268,7 +265,7 @@ pub async fn handle_dropped_frame(
         let window = safe_window.lock().expect("Failed to lock window");
         if window.is_full() || window.contains(expected_info_num) {
             debug!("Window is full or contains frame, ignoring");
-            return false;
+            return;
         }
     }
 
@@ -288,8 +285,6 @@ pub async fn handle_dropped_frame(
         .expect("Failed to lock window")
         .push(rej_frame, writer_tx.clone())
         .expect("Window is full, this should probably never happen");
-
-    false
 }
 
 /// Handles the P frame.

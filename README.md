@@ -107,3 +107,8 @@ cargo run --release -p <target> <args>
 
 - `server`
 - `client`
+
+---
+
+> [!NOTE]
+> The code is available at https://github.com/etiennecollin/ift3325

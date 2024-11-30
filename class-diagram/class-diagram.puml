@@ -13,8 +13,6 @@ class "<<struct>>\nServer" as Server{
   - async assembler(mut assembler_rx: mpsc::Receiver<Vec<u8>>, write_tx: mpsc::Sender<Vec<u8>>, addr: SocketAddr) : Result<&'static str, &'static str>
 }
 
-
-
 /'
   class "<<struct>>\nTunnel" as Tunnel {
   - handle_connection(client_stream: TcpStream, server_stream: TcpStream,drop_probability: f32, flip_probability: f32)
@@ -59,7 +57,7 @@ class "<<struct>>\nFrame" as Frame {
   + from_bytes(bytes: &[u8]) : Result<Frame, FrameError>
 }
 
-annotation "<<module>>\n tests" as testsFrame {
+annotation "<<sub-module>>\n tests" as TestsFrame {
   - frame_abort_error_test() 
   - frame_length_error_test() 
   - frame_flags_error_test() 
@@ -94,7 +92,7 @@ class "<<struct>>\nWindow" as Window {
   + default() Self
 }
 
-annotation "<<module>>\n tests" as testsWindow {
+annotation "<<sub-module>>\n tests" as TestsWindow {
   - test_push_and_pop() 
   - test_window_full()
   - test_contains()
@@ -105,17 +103,17 @@ enum WindowError {
   Full : u8
 }
 
-annotation "<<package>>\nCRC" as CRC {
+annotation "<<module>>\nCRC" as CRC {
     + lookup_table() : [u16; 256]
     + crc_16_ccitt(data: &[u8]) : u16
 }
 
-annotation "<<module>>\n tests" as testsCRC {
+annotation "<<sub-module>>\n tests" as TestsCRC {
     - crc_16_ccitt_string_test() 
     - crc_16_ccitt_array_test() 
 }
 
-annotation "<<package>>\nIO" as IO {
+annotation "<<module>>\nIO" as IO {
     + connection_request(window: &SafeWindow, connection_start: bool, srej: Option<u8>, tx: mpsc::Sender<Vec<u8>>, condition: &SafeCond)
     + reader(stream: OwnedReadHalf, window: SafeWindow, writer_tx: Option<mpsc::Sender<Vec<u8>>>, assembler_tx: Option<mpsc::Sender<Vec<u8>>>) : JoinHandle<Result<&'static str, &'static str>>
     + writer(stream: OwnedWriteHalf, rx: mpsc::Receiver<Vec<u8>>) : JoinHandle<Result<&'static str, &'static str>>
@@ -123,17 +121,17 @@ annotation "<<package>>\nIO" as IO {
     + create_frame_timer(safe_window: SafeWindow, num: u8, tx: mpsc::Sender<Vec<u8>>)
 }
 
-annotation "<<module>>\n tests" as testsIO {
+annotation "<<sub-module>>\n tests" as TestsIO {
     - test_writer() 
     - test_reader()
 }
 
-annotation "<<package>>\nByteStuffing" as ByteStuffing {
+annotation "<<module>>\nByteStuffing" as ByteStuffing {
     + byte_stuffing(frame_bytes: &[u8]) : Vec<u8>
     + byte_destuffing(frame_bytes: &[u8]) : Result<Vec<u8>, FrameError>
 }
 
-annotation "<<module>>\n tests" as testsByteStuffing {
+annotation "<<sub-module>>\n tests" as TestsByteStuffing {
     - bit_stuffing_escape_test() 
     - bit_stuffing_abort_test() 
     - bit_stuffing_simple_test() 
@@ -141,7 +139,7 @@ annotation "<<module>>\n tests" as testsByteStuffing {
     - byte_stuffing_empty_test() 
 }
 
-annotation "<<package>>\n FrameHandler" as FrameHandler {
+annotation "<<module>>\n FrameHandler" as FrameHandler {
     + handle_receive_ready(safe_window: &SafeWindow, frame: &Frame): bool
     + handle_connection_start(safe_window: SafeWindow, writer_tx:&UnboundedSender<Vec<u8>): bool
     + handle_connection_end(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>): bool
@@ -151,19 +149,18 @@ annotation "<<package>>\n FrameHandler" as FrameHandler {
     + handle_p(safe_window: SafeWindow, writer_tx: &UnboundedSender<Vec<u8>>): bool
 }
 
-annotation "<<module>>\n tests" as testsFrameHandler {
+annotation "<<sub-module>>\n tests" as TestsFrameHandler {
     - test_handle_connection_end() 
     - test_handle_receive_ready() 
     - test_handle_reject() 
+    - test_frame_drop() 
 }
 
-
-
-annotation "<<package>>\n Misc" as Misc {
+annotation "<<module>>\n Misc" as Misc {
     + async flatten<T>(handle: JoinHandle<Result<T, &'static str>>) : Result<T,&'static str>
 }
 
-annotation "<<module>>\n tests" as testsMisc {
+annotation "<<sub-module>>\n tests" as TestsMisc {
     - test_flatten_ok() 
     - test_flatten_error() 
     - test_flatten_panicked() 

@@ -54,6 +54,23 @@ cargo run --release -p server 8080 0.1 0.1
 cargo run --release -p client 127.0.0.1 8080 <file_path> 0 0 0
 ```
 
+## Logging
+
+The log level may be changed through an environment variable.
+
+```bash
+RUST_LOG=<log_level>
+```
+
+where `<log_level>` is, in increasing order of severity, either:
+
+- `DEBUG`
+- `INFO`
+- `WARN`
+- `ERROR`
+
+By default, the log level used is `INFO`.
+
 ## Debugging vs. Release
 
 Use the `--profile dev` flag for a debug build, and the `--release` flag for a release build:

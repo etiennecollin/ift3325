@@ -343,4 +343,33 @@ mod tests {
         );
         assert!(rx.try_recv().is_ok(), "Rejection frame not resent");
     }
+
+    #[tokio::test]
+    async fn test_frame_drop() {
+        let (writer_tx, _rx) = mpsc::channel::<Vec<u8>>(10);
+        let (assembler_tx, _rx) = mpsc::channel::<Vec<u8>>(10);
+        let window = SafeWindow::default();
+        window.lock().expect("Failed to lock window").is_connected = true;
+
+        // Handle the dropped frame
+        handle_information(
+            window.clone(),
+            Frame::new(FrameType::Information, 1, Vec::new()),
+            writer_tx,
+            assembler_tx,
+            &mut 0,
+        )
+        .await;
+
+        // Check if a reject frame was sent
+        let answer = window
+            .lock()
+            .expect("Failed to lock window")
+            .pop_front()
+            .expect("Window is empty")
+            .to_bytes();
+        let expected = Frame::new(FrameType::Reject, 0, Vec::new()).to_bytes();
+
+        assert_eq!(answer, expected);
+    }
 }

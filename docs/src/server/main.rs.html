@@ -309,10 +309,6 @@
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
 //! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
@@ -346,7 +342,7 @@
 <span class="kw">use </span>utils::{
     io::{reader, writer, CHANNEL_CAPACITY},
     misc::flatten,
-    window::{SafeCond, SafeWindow},
+    window::SafeWindow,
 };
 
 <span class="kw">const </span>OUTPUT_DIR: <span class="kw-2">&amp;</span>str = <span class="string">"./output"</span>;
@@ -483,14 +479,10 @@
     <span class="comment">// Create a window to manage the frames
     </span><span class="kw">let </span>window = SafeWindow::default();
 
-    <span class="comment">// Create a condition to signal the send task that space is available in the window
-    </span><span class="kw">let </span>condition = SafeCond::default();
-
     <span class="comment">// Spawn reader task which receives frames from the server
     </span><span class="kw">let </span>reader = reader(
         read,
         window.clone(),
-        condition.clone(),
         <span class="prelude-val">Some</span>(write_tx.clone()),
         <span class="prelude-val">Some</span>(assembler_tx.clone()),
     );

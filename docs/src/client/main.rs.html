@@ -369,10 +369,6 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple TCP client for sending files to a server.
 //!
 //! This client connects to a specified TCP server and sends the contents
@@ -523,18 +519,14 @@
 
     <span class="comment">// Create a window to manage the frames
     </span><span class="kw">let </span>window = SafeWindow::default();
-
-    <span class="comment">// Create a condition to signal the send task that space is available in the window
-    </span><span class="kw">let </span>condition = SafeCond::default();
+    <span class="kw">let </span>condition = window
+        .lock()
+        .expect(<span class="string">"Failed to lock window"</span>)
+        .condition
+        .clone();
 
     <span class="comment">// Spawn reader task which receives frames from the server
-    </span><span class="kw">let </span>reader = reader(
-        read,
-        window.clone(),
-        condition.clone(),
-        <span class="prelude-val">Some</span>(tx.clone()),
-        <span class="prelude-val">None</span>,
-    );
+    </span><span class="kw">let </span>reader = reader(read, window.clone(), <span class="prelude-val">Some</span>(tx.clone()), <span class="prelude-val">None</span>);
 
     <span class="comment">// Spawn the writer task which sends frames to the server
     </span><span class="kw">let </span>writer = writer(write, rx, drop_probability, flip_probability);
@@ -554,7 +546,7 @@
     <span class="comment">// =========================================================================
     // Send the file to the server
     // =========================================================================
-    </span><span class="kw">let </span>sender = send_file(tx.clone(), window.clone(), condition.clone(), file_path);
+    </span><span class="kw">let </span>sender = send_file(tx.clone(), window.clone(), condition, file_path);
 
     <span class="comment">// Drop the main transmit channel to allow the writer task to stop when
     // all data is sent
@@ -644,7 +636,7 @@
                     .expect(<span class="string">"Failed to push frame to window, this should never happen"</span>);
             }
 
-            <span class="comment">// Send the frame to the writer tas
+            <span class="comment">// Send the frame to the writer task
             </span>tx.send(frame_bytes)
                 .<span class="kw">await
                 </span>.expect(<span class="string">"Failed to send frame to writer task"</span>);

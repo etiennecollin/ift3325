@@ -363,6 +363,16 @@
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Frame handlers for the receiver.
 //!
 //! Each handler is responsible for handling a specific frame type and
@@ -370,7 +380,7 @@
 
 </span><span class="kw">use crate</span>::{
     frame::{Frame, FrameType},
-    window::{SafeCond, SafeWindow, Window},
+    window::{SafeWindow, Window},
 };
 <span class="kw">use </span>log::{debug, info, warn};
 <span class="kw">use </span>tokio::sync::mpsc::Sender;
@@ -378,7 +388,7 @@
 <span class="doccomment">/// Handles the receive ready frames.
 ///
 /// Pop the acknowledged frames from the window.
-</span><span class="kw">pub fn </span>handle_receive_ready(safe_window: SafeWindow, frame: <span class="kw-2">&amp;</span>Frame, condition: SafeCond) -&gt; bool {
+</span><span class="kw">pub fn </span>handle_receive_ready(safe_window: SafeWindow, frame: <span class="kw-2">&amp;</span>Frame) -&gt; bool {
     <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
 
     <span class="comment">// Ignore the frame if the connection is not established
@@ -390,7 +400,6 @@
     </span>window.pop_until(
         (frame.num + (Window::MAX_FRAME_NUM - <span class="number">1</span>)) % Window::MAX_FRAME_NUM,
         <span class="bool-val">true</span>,
-        condition,
     );
 
     <span class="macro">info!</span>(<span class="string">"Received RR {}"</span>, frame.num);
@@ -402,23 +411,17 @@
 /// If we are not the ones initiating the disconnection, we should send an
 /// acknowledgment. Else, we should pop the connection request frame
 /// from our window as it was acknowledged.
-</span><span class="kw">pub async fn </span>handle_connection_end(
-    safe_window: SafeWindow,
-    writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
-    condition: SafeCond,
-) -&gt; bool {
+</span><span class="kw">pub async fn </span>handle_connection_end(safe_window: SafeWindow, writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;) -&gt; bool {
+    <span class="macro">info!</span>(<span class="string">"Received connection end frame"</span>);
+
     <span class="kw">let </span>sent_disconnect_request;
     {
         <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
         window.is_connected = <span class="bool-val">false</span>;
         sent_disconnect_request = window.sent_disconnect_request;
-        <span class="macro">info!</span>(<span class="string">"Received connection end frame"</span>);
 
-        <span class="comment">// If we sent the request, we should pop the connection request frame
-        // from our window as it was acknowledged.
-        </span><span class="kw">if </span>sent_disconnect_request {
-            window.pop_front(condition);
-        }
+        <span class="comment">// Empty the window
+        </span>window.clear();
     }
 
     <span class="comment">// If we are not the ones initiating the disconnection, we should send an
@@ -444,7 +447,6 @@
     safe_window: SafeWindow,
     frame: <span class="kw-2">&amp;</span>Frame,
     writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
-    condition: SafeCond,
 ) -&gt; bool {
     <span class="kw">let </span>is_window_empty;
     {
@@ -468,7 +470,7 @@
             <span class="comment">// Check if the SREJ flag is consistent with the frame number
             </span><span class="macro">assert_eq!</span>(frame_srej, window.srej);
             <span class="comment">// Pop the connection request frame from the window as it was acknowledged
-            </span>window.pop_front(condition);
+            </span>window.pop_front();
             <span class="macro">info!</span>(<span class="string">"Received acknowledgment for connection request frame"</span>);
         }
     }
@@ -494,7 +496,6 @@
     safe_window: SafeWindow,
     frame: <span class="kw-2">&amp;</span>Frame,
     writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
-    condition: SafeCond,
 ) -&gt; bool {
     <span class="kw">let </span>frames: Vec&lt;(u8, Vec&lt;u8&gt;)&gt;;
     {
@@ -502,10 +503,6 @@
 
         <span class="comment">// Ignore the frame if the connection is not established
         </span><span class="kw">if </span>!window.is_connected {
-            <span class="macro">debug!</span>(
-                <span class="string">"Received REJ for frame {} but connection is not established"</span>,
-                frame.num
-            );
             <span class="kw">return </span><span class="bool-val">false</span>;
         }
         <span class="kw">let </span>srej = window.srej;
@@ -514,7 +511,6 @@
         </span><span class="kw">let </span>popped_num = window.pop_until(
             (frame.num + (Window::MAX_FRAME_NUM - <span class="number">1</span>)) % Window::MAX_FRAME_NUM,
             <span class="bool-val">true</span>,
-            condition,
         );
 
         <span class="macro">debug!</span>(<span class="string">"Popped {} frames"</span>, popped_num);
@@ -548,7 +544,7 @@
     );
 
     <span class="kw">for </span>(<span class="kw">_</span>, frame) <span class="kw">in </span>frames {
-        <span class="comment">//FIXME: Seems like there is a deadlock here. I never reach the debug
+        <span class="comment">// WARN: Seems like there is a deadlock here. I never reach the debug
         // statement after the loop. It also prevents the timers from sending
         // data to the writer.
         </span>writer_tx.send(frame).<span class="kw">await</span>.expect(<span class="string">"Failed to resend frame"</span>);
@@ -567,7 +563,6 @@
     safe_window: SafeWindow,
     frame: Frame,
     writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
-    condition: SafeCond,
     assembler_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
     expected_info_num: <span class="kw-2">&amp;mut </span>u8,
 ) -&gt; bool {
@@ -582,13 +577,14 @@
 
     <span class="comment">// Check if a frame was dropped
     </span><span class="kw">if </span><span class="kw-2">*</span>expected_info_num != frame.num {
-        <span class="kw">return </span>handle_dropped_frame(<span class="kw-2">&amp;</span>frame, safe_window, writer_tx, <span class="kw-2">*</span>expected_info_num).<span class="kw">await</span>;
+        handle_dropped_frame(<span class="kw-2">&amp;</span>frame, safe_window, writer_tx, <span class="kw-2">*</span>expected_info_num).<span class="kw">await</span>;
+        <span class="kw">return </span><span class="bool-val">false</span>;
     }
 
     <span class="comment">// Pop old reject frames from window
     </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
-        window.pop_until(frame.num, <span class="bool-val">true</span>, condition);
+        window.pop_until(frame.num, <span class="bool-val">true</span>);
     }
 
     <span class="comment">// Update the expected next information frame number
@@ -617,12 +613,12 @@
 ///
 /// Send a reject frame for the dropped frame and run a timer to resend the
 /// frame if it is not received after a while.
-</span><span class="kw">pub async fn </span>handle_dropped_frame(
+</span><span class="kw">async fn </span>handle_dropped_frame(
     frame: <span class="kw-2">&amp;</span>Frame,
     safe_window: SafeWindow,
     writer_tx: Sender&lt;Vec&lt;u8&gt;&gt;,
     expected_info_num: u8,
-) -&gt; bool {
+) {
     <span class="macro">warn!</span>(
         <span class="string">"Dropped frame detected - Received: {}, Expected: {}"</span>,
         frame.num, expected_info_num
@@ -633,7 +629,7 @@
         </span><span class="kw">let </span>window = safe_window.lock().expect(<span class="string">"Failed to lock window"</span>);
         <span class="kw">if </span>window.is_full() || window.contains(expected_info_num) {
             <span class="macro">debug!</span>(<span class="string">"Window is full or contains frame, ignoring"</span>);
-            <span class="kw">return </span><span class="bool-val">false</span>;
+            <span class="kw">return</span>;
         }
     }
 
@@ -651,11 +647,9 @@
     </span>safe_window
         .lock()
         .expect(<span class="string">"Failed to lock window"</span>)
-        .push(rej_frame, writer_tx.clone())
+        .push(rej_frame, writer_tx)
         .expect(<span class="string">"Window is full, this should probably never happen"</span>);
-
-    <span class="bool-val">false
-</span>}
+}
 
 <span class="doccomment">/// Handles the P frame.
 ///
@@ -679,16 +673,15 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::frame::{Frame, FrameType};
-    <span class="kw">use </span><span class="kw">crate</span>::window::{SafeCond, SafeWindow};
+    <span class="kw">use </span><span class="kw">crate</span>::window::SafeWindow;
     <span class="kw">use </span>tokio::sync::mpsc;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_handle_connection_end() {
         <span class="kw">let </span>window = SafeWindow::default();
         <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>cond = SafeCond::default();
 
-        <span class="kw">let </span>should_terminate = handle_connection_end(window, tx, cond).<span class="kw">await</span>;
+        <span class="kw">let </span>should_terminate = handle_connection_end(window, tx).<span class="kw">await</span>;
 
         <span class="macro">assert!</span>(should_terminate);
         <span class="macro">assert!</span>(rx.try_recv().is_ok(), <span class="string">"Acknowledgment frame not sent"</span>);
@@ -697,17 +690,15 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_handle_receive_ready() {
         <span class="kw">let </span>window = SafeWindow::default();
-        <span class="kw">let </span>cond = SafeCond::default();
 
         <span class="kw">let </span>frame = Frame::new(FrameType::ReceiveReady, <span class="number">1</span>, <span class="macro">vec!</span>[]);
-        <span class="kw">let </span>should_continue = handle_receive_ready(window, <span class="kw-2">&amp;</span>frame, cond);
+        <span class="kw">let </span>should_continue = handle_receive_ready(window, <span class="kw-2">&amp;</span>frame);
 
         <span class="macro">assert!</span>(!should_continue);
     }
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_handle_reject() {
         <span class="kw">let </span>window = SafeWindow::default();
-        <span class="kw">let </span>cond = SafeCond::default();
         <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">10</span>);
 
         {
@@ -719,13 +710,42 @@
         }
 
         <span class="kw">let </span>frame = Frame::new(FrameType::Reject, <span class="number">1</span>, <span class="macro">vec!</span>[]);
-        <span class="kw">let </span>should_continue = handle_reject(window, <span class="kw-2">&amp;</span>frame, tx, cond).<span class="kw">await</span>;
+        <span class="kw">let </span>should_continue = handle_reject(window, <span class="kw-2">&amp;</span>frame, tx).<span class="kw">await</span>;
 
         <span class="macro">assert!</span>(
             !should_continue,
             <span class="string">"Handler should not terminate the connection"
         </span>);
         <span class="macro">assert!</span>(rx.try_recv().is_ok(), <span class="string">"Rejection frame not resent"</span>);
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_frame_drop() {
+        <span class="kw">let </span>(writer_tx, _rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">10</span>);
+        <span class="kw">let </span>(assembler_tx, _rx) = mpsc::channel::&lt;Vec&lt;u8&gt;&gt;(<span class="number">10</span>);
+        <span class="kw">let </span>window = SafeWindow::default();
+        window.lock().expect(<span class="string">"Failed to lock window"</span>).is_connected = <span class="bool-val">true</span>;
+
+        <span class="comment">// Handle the dropped frame
+        </span>handle_information(
+            window.clone(),
+            Frame::new(FrameType::Information, <span class="number">1</span>, Vec::new()),
+            writer_tx,
+            assembler_tx,
+            <span class="kw-2">&amp;mut </span><span class="number">0</span>,
+        )
+        .<span class="kw">await</span>;
+
+        <span class="comment">// Check if a reject frame was sent
+        </span><span class="kw">let </span>answer = window
+            .lock()
+            .expect(<span class="string">"Failed to lock window"</span>)
+            .pop_front()
+            .expect(<span class="string">"Window is empty"</span>)
+            .to_bytes();
+        <span class="kw">let </span>expected = Frame::new(FrameType::Reject, <span class="number">0</span>, Vec::new()).to_bytes();
+
+        <span class="macro">assert_eq!</span>(answer, expected);
     }
 }
 </code></pre></div></section></main></body></html>

@@ -260,6 +260,15 @@
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A sliding window for the HDLC protocol.
 
 </span><span class="kw">use crate</span>::{frame::Frame, io::create_frame_timer};
@@ -297,6 +306,8 @@
     </span><span class="kw">pub </span>srej: bool,
     <span class="doccomment">/// Flag to indicate if a disconnect request was sent
     </span><span class="kw">pub </span>sent_disconnect_request: bool,
+    <span class="doccomment">/// Condition variable to notify the send task when space is available
+    </span><span class="kw">pub </span>condition: SafeCond,
 }
 
 <span class="kw">impl </span>Window {
@@ -320,6 +331,7 @@
             is_connected: <span class="bool-val">false</span>,
             srej: <span class="bool-val">false</span>,
             sent_disconnect_request: <span class="bool-val">false</span>,
+            condition: SafeCond::default(),
         }
     }
 
@@ -356,7 +368,7 @@
     <span class="doccomment">/// Pop a frame from the front of the window and return it
     ///
     /// Returns `None` if the window is empty
-    </span><span class="kw">pub fn </span>pop_front(<span class="kw-2">&amp;mut </span><span class="self">self</span>, condition: SafeCond) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
+    </span><span class="kw">pub fn </span>pop_front(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
         <span class="kw">let </span>popped = <span class="self">self</span>.frames.pop_front();
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(popped) = popped {
@@ -364,7 +376,7 @@
             </span>popped.<span class="number">1</span>.abort();
 
             <span class="comment">// Notify the send task that space was created in the window
-            </span>condition.notify_one();
+            </span><span class="self">self</span>.condition.notify_one();
 
             <span class="kw">return </span><span class="prelude-val">Some</span>(popped.<span class="number">0</span>);
         }
@@ -395,7 +407,7 @@
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
-    </span><span class="kw">pub fn </span>pop(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, condition: SafeCond) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
+    </span><span class="kw">pub fn </span>pop(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
         <span class="kw">let </span>i = <span class="self">self</span>.frames.iter().position(|(frame, <span class="kw">_</span>)| frame.num == num);
         <span class="kw">match </span>i {
             <span class="prelude-val">Some</span>(i) =&gt; {
@@ -407,7 +419,7 @@
                 <span class="comment">// Abort the timer task for the frame that was popped
                 </span>popped.<span class="number">1</span>.abort();
                 <span class="comment">// Notify the send task that space was created in the window
-                </span>condition.notify_one();
+                </span><span class="self">self</span>.condition.notify_one();
                 <span class="prelude-val">Some</span>(popped.<span class="number">0</span>)
             }
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
@@ -422,7 +434,7 @@
     /// - `condition`: The condition variable to notify the send task
     ///
     /// Returns the number of frames popped
-    </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, inclusive: bool, condition: SafeCond) -&gt; usize {
+    </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, inclusive: bool) -&gt; usize {
         <span class="comment">// Get the index of "limit" frame in the window
         </span><span class="kw">let </span>i = <span class="kw">match </span><span class="self">self</span>.frames.iter().position(|(frame, <span class="kw">_</span>)| frame.num == num) {
             <span class="prelude-val">Some</span>(i) =&gt; i,
@@ -445,10 +457,17 @@
         </span>drained.for_each(|(<span class="kw">_</span>, handle)| handle.abort());
 
         <span class="comment">// Notify the send task that space was created in the window
-        </span>condition.notify_one();
+        </span><span class="self">self</span>.condition.notify_one();
 
         <span class="comment">// Return the number of frames popped
         </span>drained_size
+    }
+
+    <span class="doccomment">/// Clears all frames from the window.
+    </span><span class="kw">pub fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.frames.iter().for_each(|(<span class="kw">_</span>, handle)| handle.abort());
+        <span class="self">self</span>.frames.clear();
+        <span class="self">self</span>.condition.notify_one();
     }
 }
 
@@ -471,7 +490,7 @@
         <span class="macro">assert!</span>(window.push(frame, tx).is_ok());
         <span class="macro">assert_eq!</span>(window.frames.len(), <span class="number">1</span>);
 
-        <span class="kw">let </span>popped_frame = window.pop_front(Arc::new(Condvar::new())).unwrap();
+        <span class="kw">let </span>popped_frame = window.pop_front().unwrap();
         <span class="macro">assert_eq!</span>(popped_frame.data, <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>]);
     }
 
@@ -507,7 +526,6 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_pop_until() {
         <span class="kw">let </span><span class="kw-2">mut </span>window = Window::new();
-        <span class="kw">let </span>cond = Arc::new(Condvar::new());
         <span class="kw">let </span>tx = tokio::sync::mpsc::channel(<span class="number">1</span>).<span class="number">0</span>;
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
             window
@@ -518,7 +536,7 @@
                 .unwrap();
         }
 
-        <span class="macro">assert_eq!</span>(window.pop_until(<span class="number">1</span>, <span class="bool-val">true</span>, cond), <span class="number">2</span>);
+        <span class="macro">assert_eq!</span>(window.pop_until(<span class="number">1</span>, <span class="bool-val">true</span>), <span class="number">2</span>);
         <span class="macro">assert_eq!</span>(window.frames.len(), <span class="number">1</span>);
     }
 }

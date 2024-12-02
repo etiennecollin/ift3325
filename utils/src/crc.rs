@@ -52,6 +52,12 @@ const fn lookup_table() -> [PolynomialSize; 256] {
 
 /// CRC-16 CCITT implementation.
 /// This function computes the CRC-16 CCITT checksum for the given data.
+///
+/// # Arguments
+/// - `data`: The data for which to compute the checksum.
+///
+/// # Returns
+/// The CRC-16 CCITT checksum.
 pub fn crc_16_ccitt(data: &[u8]) -> PolynomialSize {
     let mut remainder = INITIAL_VALUE;
     // For each byte in the data, find its corresponding value in the lookup table and XOR it with

@@ -5,8 +5,7 @@
 //! during the execution of the program.
 //!
 //! ## Usage
-//! To run the client, specify the server address, port number, file path, and
-//! a placeholder argument:
+//! To run the client, specify the required arguments:
 //!
 //! ```bash
 //! cargo run -- <server_address> <server_port> <file> <go_back_n> <prob_frame_drop> <prob_bit_flip>
@@ -130,6 +129,13 @@ async fn main() {
 /// It also handles resending frames in case of a timeout.
 ///
 /// The function returns when all data has been sent.
+///
+/// # Arguments
+/// - `stream` - The TCP stream to communicate with the server.
+/// - `srej` - The selective reject flag to use for the connection.
+/// - `file_path` - The path to the file to be sent.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
 async fn setup_connection(
     stream: TcpStream,
     srej: u8,
@@ -155,7 +161,7 @@ async fn setup_connection(
         .clone();
 
     // Spawn reader task which receives frames from the server
-    let reader = reader(read, window.clone(), Some(tx.clone()), None);
+    let reader = reader(read, window.clone(), tx.clone(), None);
 
     // Spawn the writer task which sends frames to the server
     let writer = writer(write, rx, drop_probability, flip_probability);
@@ -211,6 +217,10 @@ async fn setup_connection(
 /// - The condition cannot be waited on.
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
+///
+/// # Returns
+/// The function returns a `JoinHandle` corresponding to the async task launched
+/// that can be awaited to get the result of the operation.
 fn send_file(
     tx: mpsc::Sender<Vec<u8>>,
     safe_window: SafeWindow,

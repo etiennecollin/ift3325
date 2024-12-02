@@ -1,11 +1,11 @@
 //! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
-//! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
-//! Clients can connect to the server, send data, and if they send the message "shutdown",
-//! the server will shut down.
+//! This server uses the `log` crate for logging errors and information during
+//! the execution of the program. Clients can connect to the server, send data,
+//! and if they send the message "shutdown", the server will shut down.
 //!
 //! ## Usage
-//! To run the server, specify a port number as a command-line argument:
+//! To run the server, specify the required arguments:
 //!
 //! ```bash
 //! cargo run -- <port_number> <prob_frame_drop> <prob_bit_flip>
@@ -147,6 +147,8 @@ async fn main() {
 /// # Arguments
 /// - `stream` - The TCP stream associated with the connected client.
 /// - `addr` - The socket address of the client.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
 ///
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
@@ -172,7 +174,7 @@ async fn handle_client(
     let reader = reader(
         read,
         window.clone(),
-        Some(write_tx.clone()),
+        write_tx.clone(),
         Some(assembler_tx.clone()),
     );
 
@@ -202,6 +204,10 @@ async fn handle_client(
     }
 }
 
+/// Assembles the frames received from the client.
+///
+/// This function assembles the frames received from the client into a single
+/// message. It saves that message to a file.
 async fn assembler(
     mut assembler_rx: mpsc::Receiver<Vec<u8>>,
     addr: SocketAddr,

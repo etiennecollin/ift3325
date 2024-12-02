@@ -13,8 +13,15 @@ use crate::frame::{Frame, FrameError};
 ///
 /// This is done to avoid the byte being interpreted as a flag.
 /// How it works:
-/// - If a byte is equal to a flag, the escape flag is added before the byte and the byte has its 5th bit flipped.
+/// - If a byte is equal to a flag, the escape flag is added before the byte
+///   and the byte has its 5th bit flipped.
 /// - Boundary flags are added at the start and end of the frame.
+///
+/// # Arguments
+/// - `frame_bytes`: The frame bytes to stuff.
+///
+/// # Returns
+/// The stuffed frame bytes.
 pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
     let mut stuffed_frame: Vec<u8> = Vec::new();
 
@@ -36,6 +43,12 @@ pub fn byte_stuffing(frame_bytes: &[u8]) -> Vec<u8> {
 ///
 /// This function removes the byte stuffing from the given frame bytes and
 /// returns the original frame bytes.
+///
+/// # Arguments
+/// - `frame_bytes`: The frame bytes to destuff.
+///
+/// # Returns
+/// The destuffed frame bytes or an error if an abort sequence is received.
 pub fn byte_destuffing(frame_bytes: &[u8]) -> Result<Vec<u8>, FrameError> {
     let mut destuffed_frame: Vec<u8> = Vec::with_capacity(Frame::MAX_SIZE);
 

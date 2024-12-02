@@ -157,10 +157,16 @@ async fn main() {
 }
 
 /// Handles a single client connection.
+///
 /// This function reads frames from the client and sends them to the server.
-/// It also reads frames from the server and sends them to the client.
 /// It introduces errors in the communication based on the drop and flip probabilities.
-/// The function returns when the client or server closes the connection.
+/// The function returns when the client closes the connection.
+///
+/// # Arguments
+/// - `client_stream` - The client stream
+/// - `server_stream` - The server stream
+/// - `drop_probability` - The probability of dropping a frame
+/// - `flip_probability` - The probability of flipping a bit in a frame
 async fn handle_connection(
     client_stream: TcpStream,
     server_stream: TcpStream,
@@ -201,6 +207,10 @@ async fn handle_connection(
 /// Handles the client stream.
 /// This function reads frames from the client and sends them to the server.
 /// It introduces errors in the communication based on the drop and flip probabilities.
+///
+/// # Arguments
+/// - `client_read` - The client read stream.
+/// - `server_tx` - The server sender channel.
 fn handle_client(
     mut client_read: OwnedReadHalf,
     server_tx: mpsc::Sender<Vec<u8>>,
@@ -240,6 +250,10 @@ fn handle_client(
 /// Handles the server stream.
 /// This function reads frames from the server and sends them to the client.
 /// It introduces errors in the communication based on the drop and flip probabilities.
+///
+/// # Arguments
+/// - `server_read` - The server read stream.
+/// - `client_tx` - The client sender channel.
 fn handle_server(
     mut server_read: OwnedReadHalf,
     client_tx: mpsc::Sender<Vec<u8>>,

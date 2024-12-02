@@ -155,6 +155,11 @@ impl Frame {
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
+    ///
+    /// # Panics
+    /// This function panics if the frame content is not set.
+    /// This should never happen since the content is set during the frame
+    /// creation.
     fn generate_content(&mut self) {
         // Create the frame content
         let mut frame_content = vec![self.frame_type, self.num];
@@ -187,6 +192,11 @@ impl Frame {
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
+    ///
+    /// # Panics
+    /// This function panics if the frame content is not set.
+    /// This should never happen since the content is set during the frame
+    /// creation.
     pub fn to_bytes(&self) -> Vec<u8> {
         self.content_stuffed
             .as_ref()

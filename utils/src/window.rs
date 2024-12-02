@@ -73,7 +73,7 @@ impl Window {
         }
     }
 
-    /// Push a frame to the back of the window and start a timer to resend it
+    /// Pushes a frame to the back of the window and start a timer to resend it
     /// if needed.
     ///
     /// # Arguments
@@ -94,9 +94,10 @@ impl Window {
         Ok(())
     }
 
-    /// Pop a frame from the front of the window and return it
+    /// Pops a frame from the front of the window
     ///
-    /// Returns `None` if the window is empty
+    /// # Returns
+    /// The frame that was popped or `None` if the window is empty
     pub fn pop_front(&mut self) -> Option<Frame> {
         let popped = self.frames.pop_front();
 
@@ -113,26 +114,25 @@ impl Window {
         None
     }
 
-    /// Check if the window is full
+    /// Checks if the window is full
     pub fn is_full(&self) -> bool {
         self.frames.len() == self.get_max_size()
     }
 
-    /// Check if the window contains a frame with the given number
+    /// Checks if the window contains a frame with the given number
     pub fn contains(&self, num: u8) -> bool {
         self.frames.iter().any(|(frame, _)| frame.num == num)
     }
 
-    /// Check if the window is empty
+    /// Checks if the window is empty
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    /// Pop a specific frame from the window.
+    /// Pops a specific frame from the window.
     ///
     /// # Arguments
     /// - `num`: The number of the frame to pop
-    /// - `condition`: The condition variable to notify the send task
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
@@ -160,8 +160,8 @@ impl Window {
     /// # Arguments
     /// - `num`: The number of the frame to pop until
     /// - `inclusive`: If true, the frame with the given number is also popped
-    /// - `condition`: The condition variable to notify the send task
     ///
+    /// # Returns
     /// Returns the number of frames popped
     pub fn pop_until(&mut self, num: u8, inclusive: bool) -> usize {
         // Get the index of "limit" frame in the window

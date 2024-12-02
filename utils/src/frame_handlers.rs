@@ -13,6 +13,16 @@ use tokio::sync::mpsc::Sender;
 /// Handles the receive ready frames.
 ///
 /// Pop the acknowledged frames from the window.
+///
+/// # Arguments
+/// - `safe_window`: The window to handle the frame with.
+/// - `frame`: The frame to handle.
+///
+/// # Returns
+/// Always returns false as the connection should not be terminated.
+///
+/// # Panics
+/// Panics if the window cannot be locked.
 pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame) -> bool {
     let mut window = safe_window.lock().expect("Failed to lock window");
 
@@ -36,6 +46,16 @@ pub fn handle_receive_ready(safe_window: SafeWindow, frame: &Frame) -> bool {
 /// If we are not the ones initiating the disconnection, we should send an
 /// acknowledgment. Else, we should pop the connection request frame
 /// from our window as it was acknowledged.
+///
+/// # Arguments
+/// - `safe_window`: The window to handle the frame with.
+/// - `writer_tx`: The channel to send data to the writer.
+///
+/// # Returns
+/// Always returns true as the connection should be terminated.
+///
+/// # Panics
+/// Panics if the window cannot be locked.
 pub async fn handle_connection_end(safe_window: SafeWindow, writer_tx: Sender<Vec<u8>>) -> bool {
     info!("Received connection end frame");
 
@@ -68,6 +88,20 @@ pub async fn handle_connection_end(safe_window: SafeWindow, writer_tx: Sender<Ve
 /// If the window is empty, then we are not the ones initiating the connection and
 /// must set the SREJ flag based on the frame number. Else, we should check if the
 /// SREJ flag is consistent with the frame number received.
+///
+/// # Arguments
+/// - `safe_window`: The window to handle the frame with.
+/// - `frame`: The frame to handle.
+/// - `writer_tx`: The channel to send data to the writer.
+///
+/// # Returns
+/// Always returns false as the connection should not be terminated.
+///
+/// # Panics
+/// Panics if:
+/// - The window cannot be locked.
+/// - The received frame number is invalid.
+/// - The acknowledgment frame cannot be sent.
 pub async fn handle_connection_start(
     safe_window: SafeWindow,
     frame: &Frame,
@@ -117,6 +151,19 @@ pub async fn handle_connection_start(
 /// Handles the REJ and SREJ frames.
 ///
 /// Resend the rejected frames.
+///
+/// # Arguments
+/// - `safe_window`: The window to handle the frame with.
+/// - `frame`: The frame to handle.
+/// - `writer_tx`: The channel to send data to the writer.
+///
+/// # Returns
+/// Always returns false as the connection should not be terminated.
+///
+/// # Panics
+/// Panics if:
+/// - The window cannot be locked.
+/// - The rejected frame cannot be found in the window.
 pub async fn handle_reject(
     safe_window: SafeWindow,
     frame: &Frame,
@@ -169,9 +216,6 @@ pub async fn handle_reject(
     );
 
     for (_, frame) in frames {
-        // WARN: Seems like there is a deadlock here. I never reach the debug
-        // statement after the loop. It also prevents the timers from sending
-        // data to the writer.
         writer_tx.send(frame).await.expect("Failed to resend frame");
     }
 
@@ -184,6 +228,22 @@ pub async fn handle_reject(
 ///
 /// The receiver sends an acknowledgment frame for the information frame and sends the data to the
 /// assembler.
+///
+/// # Arguments
+/// - `safe_window`: The window to handle the frame with.
+/// - `frame`: The frame to handle.
+/// - `writer_tx`: The channel to send data to the writer.
+/// - `assembler_tx`: The channel to send data to the assembler.
+/// - `expected_info_num`: The expected next information frame number.
+///
+/// # Returns
+/// Always returns false as the connection should not be terminated.
+///
+/// # Panics
+/// Panics if:
+/// - The window cannot be locked.
+/// - The acknowledgment frame cannot be sent.
+/// - The frame data cannot be sent to the assembler.
 pub async fn handle_information(
     safe_window: SafeWindow,
     frame: Frame,
@@ -238,6 +298,18 @@ pub async fn handle_information(
 ///
 /// Send a reject frame for the dropped frame and run a timer to resend the
 /// frame if it is not received after a while.
+///
+/// # Arguments
+/// - `frame`: The frame to handle.
+/// - `safe_window`: The window to handle the frame with.
+/// - `writer_tx`: The channel to send data to the writer.
+/// - `expected_info_num`: The expected next information frame number.
+///
+/// # Panics
+/// Panics if:
+/// - The window cannot be locked.
+/// - The reject frame cannot be sent.
+/// - The reject frame cannot be added to the window as it is full.
 async fn handle_dropped_frame(
     frame: &Frame,
     safe_window: SafeWindow,
@@ -280,6 +352,16 @@ async fn handle_dropped_frame(
 ///
 /// Send an acknowledgment for the P frame telling the sender that the receiver is ready to
 /// receive.
+///
+/// # Arguments
+/// - `writer_tx`: The channel to send data to the writer.
+/// - `expected_info_num`: The expected next information frame number.
+///
+/// # Returns
+/// Always returns false as the connection should not be terminated.
+///
+/// # Panics
+/// Panics if the acknowledgment frame cannot be sent.
 pub async fn handle_p(writer_tx: Sender<Vec<u8>>, expected_info_num: u8) -> bool {
     // Send an acknowledgment for the P frame
     let ack_frame = Frame::new(FrameType::ReceiveReady, expected_info_num, Vec::new()).to_bytes();

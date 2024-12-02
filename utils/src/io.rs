@@ -27,9 +27,12 @@ pub const CHANNEL_CAPACITY: usize = 1024;
 /// # Arguments
 /// - `stream` - The read half of the TCP stream.
 /// - `window` - The window to manage the frames.
-/// - `condition` - The condition to signal tasks that space is available in the window.
 /// - `writer_tx` - The sender to send frames to the writer.
 /// - `assembler_tx` - The sender to send frames to the assembler.
+///
+/// # Returns
+/// The function returns a join handle to the spawned task.
+/// The task will return a string indicating the reason for ending.
 ///
 /// # Panics
 /// The function will panic if:
@@ -37,7 +40,7 @@ pub const CHANNEL_CAPACITY: usize = 1024;
 pub fn reader(
     mut stream: OwnedReadHalf,
     window: SafeWindow,
-    writer_tx: Option<mpsc::Sender<Vec<u8>>>,
+    writer_tx: mpsc::Sender<Vec<u8>>,
     assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
 ) -> JoinHandle<Result<&'static str, &'static str>> {
     tokio::spawn(async move {
@@ -132,7 +135,6 @@ pub fn reader(
 /// # Arguments
 /// - `frame` - The frame received from the server.
 /// - `safe_window` - The window to manage the frames.
-/// - `condition` - The condition variable to signaling that space was created in the window.
 /// - `writer_tx` - The sender to send the frames in case of a rejection. If set to `None`, then
 ///   the function will panic if the frame is a rejection.
 /// - `assembler_tx` - The sender to send the frame to the assembler. The assembler will
@@ -145,17 +147,14 @@ pub fn reader(
 /// # Panics
 /// The functino will panic if:
 /// - The lock of the window fails
-/// - The `tx` is not provided and the frame is a rejection
-/// - The sender fails to send the frames
+/// - The `assembler_tx` is not provided when handling an information frame
 pub async fn handle_reception(
     frame: Frame,
     safe_window: SafeWindow,
-    writer_tx: Option<mpsc::Sender<Vec<u8>>>,
+    writer_tx: mpsc::Sender<Vec<u8>>,
     assembler_tx: Option<mpsc::Sender<Vec<u8>>>,
     expected_info_num: &mut u8,
 ) -> bool {
-    let writer_tx = writer_tx.expect("No sender provided to handle frame rejection");
-
     match frame.frame_type.into() {
         FrameType::ReceiveReady => handle_receive_ready(safe_window, &frame),
         FrameType::ConnectionEnd => handle_connection_end(safe_window, writer_tx).await,
@@ -185,6 +184,12 @@ pub async fn handle_reception(
 /// # Arguments
 /// - `stream` - The write half of the TCP stream.
 /// - `rx` - The receiver channel to receive the frames to send.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
+///
+/// # Returns
+/// The function returns a join handle to the spawned task.
+/// The task will return a string indicating the reason for ending.
 pub fn writer(
     mut stream: OwnedWriteHalf,
     mut rx: mpsc::Receiver<Vec<u8>>,
@@ -280,9 +285,8 @@ pub fn writer(
 /// - `frame_bytes` - The bytes of the frame to send.
 /// - `tx` - The sender to send the frame if it was not acknowledged.
 ///
-/// # Panics
-/// The function will panic if:
-/// - The sender fails to send the frame
+/// # Returns
+/// The function returns a join handle to the spawned task.
 pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
     debug!("Starting frame timer for frame {}", frame_bytes[2]);
     tokio::spawn(async move {
@@ -317,6 +321,7 @@ pub fn create_frame_timer(frame_bytes: Vec<u8>, tx: mpsc::Sender<Vec<u8>>) -> Jo
 /// - `condition` - The condition variable to signal the window state.
 ///
 /// # Panics
+/// The function will panic if:
 /// - The window lock fails
 /// - The frame fails to be pushed to the window
 /// - The frame fails to be sent to the writer task
@@ -460,7 +465,7 @@ mod tests {
             window.is_connected = true;
             window.sent_disconnect_request = false;
         }
-        let reader_handle = reader(client_read, SafeWindow::default(), Some(tx), None);
+        let reader_handle = reader(client_read, SafeWindow::default(), tx, None);
 
         // Mock the input to the reader by writing data to the server's write half
         server_write

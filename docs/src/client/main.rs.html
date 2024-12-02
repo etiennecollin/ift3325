@@ -369,6 +369,16 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple TCP client for sending files to a server.
 //!
 //! This client connects to a specified TCP server and sends the contents
@@ -376,8 +386,7 @@
 //! during the execution of the program.
 //!
 //! ## Usage
-//! To run the client, specify the server address, port number, file path, and
-//! a placeholder argument:
+//! To run the client, specify the required arguments:
 //!
 //! ```bash
 //! cargo run -- &lt;server_address&gt; &lt;server_port&gt; &lt;file&gt; &lt;go_back_n&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;
@@ -501,6 +510,13 @@
 /// It also handles resending frames in case of a timeout.
 ///
 /// The function returns when all data has been sent.
+///
+/// # Arguments
+/// - `stream` - The TCP stream to communicate with the server.
+/// - `srej` - The selective reject flag to use for the connection.
+/// - `file_path` - The path to the file to be sent.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
 </span><span class="kw">async fn </span>setup_connection(
     stream: TcpStream,
     srej: u8,
@@ -526,7 +542,7 @@
         .clone();
 
     <span class="comment">// Spawn reader task which receives frames from the server
-    </span><span class="kw">let </span>reader = reader(read, window.clone(), <span class="prelude-val">Some</span>(tx.clone()), <span class="prelude-val">None</span>);
+    </span><span class="kw">let </span>reader = reader(read, window.clone(), tx.clone(), <span class="prelude-val">None</span>);
 
     <span class="comment">// Spawn the writer task which sends frames to the server
     </span><span class="kw">let </span>writer = writer(write, rx, drop_probability, flip_probability);
@@ -582,6 +598,10 @@
 /// - The condition cannot be waited on.
 /// - The frame cannot be pushed to the window.
 /// - The frame cannot be sent to the writer task.
+///
+/// # Returns
+/// The function returns a `JoinHandle` corresponding to the async task launched
+/// that can be awaited to get the result of the operation.
 </span><span class="kw">fn </span>send_file(
     tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     safe_window: SafeWindow,

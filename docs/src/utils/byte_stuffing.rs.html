@@ -127,6 +127,19 @@
 <a href="#127" id="127">127</a>
 <a href="#128" id="128">128</a>
 <a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Provides functions to perform byte stuffing on frame bytes.
 //!
 //! Byte stuffing is done to avoid the byte being interpreted as a flag.
@@ -142,8 +155,15 @@
 ///
 /// This is done to avoid the byte being interpreted as a flag.
 /// How it works:
-/// - If a byte is equal to a flag, the escape flag is added before the byte and the byte has its 5th bit flipped.
+/// - If a byte is equal to a flag, the escape flag is added before the byte
+///   and the byte has its 5th bit flipped.
 /// - Boundary flags are added at the start and end of the frame.
+///
+/// # Arguments
+/// - `frame_bytes`: The frame bytes to stuff.
+///
+/// # Returns
+/// The stuffed frame bytes.
 </span><span class="kw">pub fn </span>byte_stuffing(frame_bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; Vec&lt;u8&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>stuffed_frame: Vec&lt;u8&gt; = Vec::new();
 
@@ -165,6 +185,12 @@
 ///
 /// This function removes the byte stuffing from the given frame bytes and
 /// returns the original frame bytes.
+///
+/// # Arguments
+/// - `frame_bytes`: The frame bytes to destuff.
+///
+/// # Returns
+/// The destuffed frame bytes or an error if an abort sequence is received.
 </span><span class="kw">pub fn </span>byte_destuffing(frame_bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, FrameError&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>destuffed_frame: Vec&lt;u8&gt; = Vec::with_capacity(Frame::MAX_SIZE);
 

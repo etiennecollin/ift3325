@@ -83,6 +83,12 @@
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
 <a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! CRC-16 CCITT implementation.
 //! This module provides an implementation of the CRC-16 CCITT checksum algorithm.
 
@@ -137,6 +143,12 @@
 
 <span class="doccomment">/// CRC-16 CCITT implementation.
 /// This function computes the CRC-16 CCITT checksum for the given data.
+///
+/// # Arguments
+/// - `data`: The data for which to compute the checksum.
+///
+/// # Returns
+/// The CRC-16 CCITT checksum.
 </span><span class="kw">pub fn </span>crc_16_ccitt(data: <span class="kw-2">&amp;</span>[u8]) -&gt; PolynomialSize {
     <span class="kw">let </span><span class="kw-2">mut </span>remainder = INITIAL_VALUE;
     <span class="comment">// For each byte in the data, find its corresponding value in the lookup table and XOR it with

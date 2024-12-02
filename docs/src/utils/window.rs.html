@@ -344,7 +344,7 @@
         }
     }
 
-    <span class="doccomment">/// Push a frame to the back of the window and start a timer to resend it
+    <span class="doccomment">/// Pushes a frame to the back of the window and start a timer to resend it
     /// if needed.
     ///
     /// # Arguments
@@ -365,9 +365,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Pop a frame from the front of the window and return it
+    <span class="doccomment">/// Pops a frame from the front of the window
     ///
-    /// Returns `None` if the window is empty
+    /// # Returns
+    /// The frame that was popped or `None` if the window is empty
     </span><span class="kw">pub fn </span>pop_front(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Frame&gt; {
         <span class="kw">let </span>popped = <span class="self">self</span>.frames.pop_front();
 
@@ -384,26 +385,25 @@
         <span class="prelude-val">None
     </span>}
 
-    <span class="doccomment">/// Check if the window is full
+    <span class="doccomment">/// Checks if the window is full
     </span><span class="kw">pub fn </span>is_full(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.frames.len() == <span class="self">self</span>.get_max_size()
     }
 
-    <span class="doccomment">/// Check if the window contains a frame with the given number
+    <span class="doccomment">/// Checks if the window contains a frame with the given number
     </span><span class="kw">pub fn </span>contains(<span class="kw-2">&amp;</span><span class="self">self</span>, num: u8) -&gt; bool {
         <span class="self">self</span>.frames.iter().any(|(frame, <span class="kw">_</span>)| frame.num == num)
     }
 
-    <span class="doccomment">/// Check if the window is empty
+    <span class="doccomment">/// Checks if the window is empty
     </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.frames.is_empty()
     }
 
-    <span class="doccomment">/// Pop a specific frame from the window.
+    <span class="doccomment">/// Pops a specific frame from the window.
     ///
     /// # Arguments
     /// - `num`: The number of the frame to pop
-    /// - `condition`: The condition variable to notify the send task
     ///
     /// # Returns
     /// The frame that was popped or `None` if the frame was not found
@@ -431,8 +431,8 @@
     /// # Arguments
     /// - `num`: The number of the frame to pop until
     /// - `inclusive`: If true, the frame with the given number is also popped
-    /// - `condition`: The condition variable to notify the send task
     ///
+    /// # Returns
     /// Returns the number of frames popped
     </span><span class="kw">pub fn </span>pop_until(<span class="kw-2">&amp;mut </span><span class="self">self</span>, num: u8, inclusive: bool) -&gt; usize {
         <span class="comment">// Get the index of "limit" frame in the window

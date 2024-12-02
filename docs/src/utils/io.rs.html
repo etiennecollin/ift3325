@@ -478,6 +478,11 @@
 <a href="#478" id="478">478</a>
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Contains the functions to manage the IO tasks.
 
 </span><span class="kw">use crate</span>::{
@@ -507,9 +512,12 @@
 /// # Arguments
 /// - `stream` - The read half of the TCP stream.
 /// - `window` - The window to manage the frames.
-/// - `condition` - The condition to signal tasks that space is available in the window.
 /// - `writer_tx` - The sender to send frames to the writer.
 /// - `assembler_tx` - The sender to send frames to the assembler.
+///
+/// # Returns
+/// The function returns a join handle to the spawned task.
+/// The task will return a string indicating the reason for ending.
 ///
 /// # Panics
 /// The function will panic if:
@@ -517,7 +525,7 @@
 </span><span class="kw">pub fn </span>reader(
     <span class="kw-2">mut </span>stream: OwnedReadHalf,
     window: SafeWindow,
-    writer_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
+    writer_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     assembler_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
 ) -&gt; JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt; {
     tokio::spawn(<span class="kw">async move </span>{
@@ -612,7 +620,6 @@
 /// # Arguments
 /// - `frame` - The frame received from the server.
 /// - `safe_window` - The window to manage the frames.
-/// - `condition` - The condition variable to signaling that space was created in the window.
 /// - `writer_tx` - The sender to send the frames in case of a rejection. If set to `None`, then
 ///   the function will panic if the frame is a rejection.
 /// - `assembler_tx` - The sender to send the frame to the assembler. The assembler will
@@ -625,17 +632,14 @@
 /// # Panics
 /// The functino will panic if:
 /// - The lock of the window fails
-/// - The `tx` is not provided and the frame is a rejection
-/// - The sender fails to send the frames
+/// - The `assembler_tx` is not provided when handling an information frame
 </span><span class="kw">pub async fn </span>handle_reception(
     frame: Frame,
     safe_window: SafeWindow,
-    writer_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
+    writer_tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;,
     assembler_tx: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
     expected_info_num: <span class="kw-2">&amp;mut </span>u8,
 ) -&gt; bool {
-    <span class="kw">let </span>writer_tx = writer_tx.expect(<span class="string">"No sender provided to handle frame rejection"</span>);
-
     <span class="kw">match </span>frame.frame_type.into() {
         FrameType::ReceiveReady =&gt; handle_receive_ready(safe_window, <span class="kw-2">&amp;</span>frame),
         FrameType::ConnectionEnd =&gt; handle_connection_end(safe_window, writer_tx).<span class="kw">await</span>,
@@ -665,6 +669,12 @@
 /// # Arguments
 /// - `stream` - The write half of the TCP stream.
 /// - `rx` - The receiver channel to receive the frames to send.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
+///
+/// # Returns
+/// The function returns a join handle to the spawned task.
+/// The task will return a string indicating the reason for ending.
 </span><span class="kw">pub fn </span>writer(
     <span class="kw-2">mut </span>stream: OwnedWriteHalf,
     <span class="kw-2">mut </span>rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;,
@@ -760,9 +770,8 @@
 /// - `frame_bytes` - The bytes of the frame to send.
 /// - `tx` - The sender to send the frame if it was not acknowledged.
 ///
-/// # Panics
-/// The function will panic if:
-/// - The sender fails to send the frame
+/// # Returns
+/// The function returns a join handle to the spawned task.
 </span><span class="kw">pub fn </span>create_frame_timer(frame_bytes: Vec&lt;u8&gt;, tx: mpsc::Sender&lt;Vec&lt;u8&gt;&gt;) -&gt; JoinHandle&lt;()&gt; {
     <span class="macro">debug!</span>(<span class="string">"Starting frame timer for frame {}"</span>, frame_bytes[<span class="number">2</span>]);
     tokio::spawn(<span class="kw">async move </span>{
@@ -797,6 +806,7 @@
 /// - `condition` - The condition variable to signal the window state.
 ///
 /// # Panics
+/// The function will panic if:
 /// - The window lock fails
 /// - The frame fails to be pushed to the window
 /// - The frame fails to be sent to the writer task
@@ -940,7 +950,7 @@
             window.is_connected = <span class="bool-val">true</span>;
             window.sent_disconnect_request = <span class="bool-val">false</span>;
         }
-        <span class="kw">let </span>reader_handle = reader(client_read, SafeWindow::default(), <span class="prelude-val">Some</span>(tx), <span class="prelude-val">None</span>);
+        <span class="kw">let </span>reader_handle = reader(client_read, SafeWindow::default(), tx, <span class="prelude-val">None</span>);
 
         <span class="comment">// Mock the input to the reader by writing data to the server's write half
         </span>server_write

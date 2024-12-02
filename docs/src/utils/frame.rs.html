@@ -398,6 +398,16 @@
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The frame module contains the Frame struct, the FrameType enum and the
 //! FrameError enum.
 //!
@@ -555,6 +565,11 @@
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
+    ///
+    /// # Panics
+    /// This function panics if the frame content is not set.
+    /// This should never happen since the content is set during the frame
+    /// creation.
     </span><span class="kw">fn </span>generate_content(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="comment">// Create the frame content
         </span><span class="kw">let </span><span class="kw-2">mut </span>frame_content = <span class="macro">vec!</span>[<span class="self">self</span>.frame_type, <span class="self">self</span>.num];
@@ -587,6 +602,11 @@
     /// - 1 byte: boundary flag
     ///
     /// The size of the content may vary due to byte stuffing.
+    ///
+    /// # Panics
+    /// This function panics if the frame content is not set.
+    /// This should never happen since the content is set during the frame
+    /// creation.
     </span><span class="kw">pub fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt; {
         <span class="self">self</span>.content_stuffed
             .as_ref()

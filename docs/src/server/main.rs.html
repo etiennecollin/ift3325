@@ -309,14 +309,20 @@
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple asynchronous TCP server that listens for client connections and handles incoming data.
 //!
-//! This server uses the `tokio` asynchronous runtime and the `log` crate for logging.
-//! Clients can connect to the server, send data, and if they send the message "shutdown",
-//! the server will shut down.
+//! This server uses the `log` crate for logging errors and information during
+//! the execution of the program. Clients can connect to the server, send data,
+//! and if they send the message "shutdown", the server will shut down.
 //!
 //! ## Usage
-//! To run the server, specify a port number as a command-line argument:
+//! To run the server, specify the required arguments:
 //!
 //! ```bash
 //! cargo run -- &lt;port_number&gt; &lt;prob_frame_drop&gt; &lt;prob_bit_flip&gt;
@@ -458,6 +464,8 @@
 /// # Arguments
 /// - `stream` - The TCP stream associated with the connected client.
 /// - `addr` - The socket address of the client.
+/// - `drop_probability` - The probability of dropping a frame.
+/// - `flip_probability` - The probability of flipping a bit in a frame.
 ///
 /// # Returns
 /// Returns `Ok(true)` if the client sent "shutdown", indicating the server should shut down,
@@ -483,7 +491,7 @@
     </span><span class="kw">let </span>reader = reader(
         read,
         window.clone(),
-        <span class="prelude-val">Some</span>(write_tx.clone()),
+        write_tx.clone(),
         <span class="prelude-val">Some</span>(assembler_tx.clone()),
     );
 
@@ -513,7 +521,11 @@
     }
 }
 
-<span class="kw">async fn </span>assembler(
+<span class="doccomment">/// Assembles the frames received from the client.
+///
+/// This function assembles the frames received from the client into a single
+/// message. It saves that message to a file.
+</span><span class="kw">async fn </span>assembler(
     <span class="kw-2">mut </span>assembler_rx: mpsc::Receiver&lt;Vec&lt;u8&gt;&gt;,
     addr: SocketAddr,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {

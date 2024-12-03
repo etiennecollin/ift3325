@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["handle_client","handle_connection","handle_server","main"]};

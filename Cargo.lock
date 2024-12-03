@@ -1253,16 +1253,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tunnel"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "tokio",
- "utils",
-]
-
-[[package]]
 name = "unicode-ident"
 version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

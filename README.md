@@ -30,19 +30,6 @@ Run the client:
 > The probabilities are given as floating point numbers in the range [0, 1]
 > and are independent probabilities.
 
-<!-- Run the tunnel: -->
-<!---->
-<!-- ```bash -->
-<!-- ./tunnel <in_port> <out_address> <out_port> <prob_frame_drop> <prob_bit_flip> -->
-<!-- ``` -->
-<!---->
-<!-- > [!NOTE] -->
-<!-- > The tunnel allows the simulation of a noisy environment where frames -->
-<!-- > might be dropped or suffer bit flips. The probabilities in the arguments are -->
-<!-- > values in the range \[0, 1\] and are independant. Every frame, in any direction, -->
-<!-- > has a probability of being dropped. If it is not dropped, the second -->
-<!-- > probability is used to determine if a bit is flipped in the frame. -->
-
 ## Example usage
 
 In this example, the client and server are used. Each frame from the server
